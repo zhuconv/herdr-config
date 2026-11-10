@@ -225,6 +225,10 @@ export default class Agents extends View {
     if (props()?.sortMenu) return this.sortMenu(t);
     const collapsed = narrow();
     const sort = sortOf();
+    // my-agents: while the ⌃Tab popup is open (mods/agent-switcher), the highlight sits on
+    // the agent it would switch to rather than the focused one: where you'd land.
+    const picking = shared("my-tabs.switcher");
+    const picked = picking?.list?.[picking.index] ?? null;
     let list = agents();
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
@@ -313,6 +317,7 @@ export default class Agents extends View {
           .flex_none()
           .items_center()
           .gap(4)
+          .when(a.address === picked, (el) => el.bg(t.selected))
           .hover((s) => s.bg(t.hover))
           .on_click(() => run("pane.focus", { pane: a.pane }))
           .child(div().flex_1().min_w(0).whitespace_nowrap().text_right().text_color(t.muted).child(String(i + 1)))
@@ -353,7 +358,7 @@ export default class Agents extends View {
         .rounded(8)
         .items_center()
         .gap(9)
-        .when(a.focused, (el) => el.bg(t.selected))
+        .when(picked ? a.address === picked : a.focused, (el) => el.bg(t.selected))
         .cursor_pointer()
         .hover((s) => s.bg(t.hover))
         .on_hover((on, cx) => {
