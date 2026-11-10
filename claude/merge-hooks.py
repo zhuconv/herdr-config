@@ -16,7 +16,7 @@ try:
 except FileNotFoundError:
     settings = {}
 
-hook = {"type": "command", "command": '"$HOME/.local/bin/agent-note"', "timeout": 5, "async": True}
+hook = {"type": "command", "command": '"$HOME/.local/bin/agent-note"', "timeout": 15, "async": True}
 hooks = settings.setdefault("hooks", {})
 added = []
 for event in ("UserPromptSubmit", "Stop"):

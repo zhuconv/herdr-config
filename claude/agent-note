@@ -6,11 +6,17 @@ Stop: the end of the reply (its last two lines) goes in note.said.
 Both land on the hc terminal the agent runs in ($HC_TERMINAL_ID); outside hc it does
 nothing. It prints nothing (a UserPromptSubmit hook's output would join the prompt) and
 always exits 0, so it never gets in Claude's way.
+
+On a cluster compute node the terminal's hc runs on the login node. There the label goes
+through `ssh <login node>`: $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev session.
+(Vista: plain ssh from a node to login1 needs no MFA; BatchMode=yes would break it.)
 """
 import json
 import os
 import re
+import shlex
 import shutil
+import socket
 import subprocess
 import sys
 
@@ -29,8 +35,18 @@ def main():
     else:
         return
     if text:
+        label(term, f"{key}={text}")
+
+
+def label(term, pair):
+    via = (os.environ.get("HC_VIA") or os.environ.get("SLURM_SUBMIT_HOST") or "").split(".")[0]
+    if via and via != socket.gethostname().split(".")[0]:
+        remote = "~/.local/bin/hc label " + shlex.quote(term) + " " + shlex.quote(pair)
+        subprocess.run(["ssh", "-o", "ConnectTimeout=8", via, remote],
+                       stdin=subprocess.DEVNULL, capture_output=True, timeout=12)
+    else:
         hc = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
-        subprocess.run([hc, "label", term, f"{key}={text}"], capture_output=True, timeout=4)
+        subprocess.run([hc, "label", term, pair], capture_output=True, timeout=4)
 
 
 CJK = re.compile(r"[\u2e80-\u9fff\uff00-\uffef]")
