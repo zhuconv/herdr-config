@@ -12,6 +12,16 @@ gh repo clone zhuconv/herdr-config ~/herdr-config && ~/herdr-config/install.sh
 
 脚本会被替换的文件先备份到 `~/.config/herdr-app.backup-<时间>/`，可以重复运行。最后它会提示两步需要手动做的事：在 Raycast 里给 "Go to Waiting Agent" 录 ⌘G，以及在辅助功能里允许 Raycast。
 
+## 远程机器（Herdr 里的远程 space）
+
+在远程机器的 Herdr 终端里直接运行的 Claude 会话，也能在 ⌃Tab 卡片上显示最近的 prompt 和回复，但要先给那台机器装上 hook（那台需要有 python3）：
+
+```sh
+./install.sh --remote a5k      # 机器名来自 hc machine ls
+```
+
+已经装好的有 a5k、2a5k、4vita2、4vita5。vista 不适用：那里的 Claude 跑在计算节点上，连不到 login1 上的 hc。
+
 ## 改了配置之后
 
 在改过的那台电脑上：

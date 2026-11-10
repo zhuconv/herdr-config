@@ -3,8 +3,22 @@
 # the Claude Code hook behind the ⌃Tab cards, and the Raycast ⌘G script.
 # Safe to run again to update. Anything it replaces is copied first to
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
+#
+#   ./install.sh --remote <machine>   (a machine from `hc machine ls`)
+# puts only the hook on that machine, so Claude sessions running there in Herdr
+# terminals fill their ⌃Tab cards too. It needs python3 there.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+if [ "${1:-}" = "--remote" ]; then
+  m=${2:?usage: ./install.sh --remote <machine>}
+  hc file write --on "$m" .local/bin/agent-note <claude/agent-note >/dev/null
+  hc exec --on "$m" -- chmod +x .local/bin/agent-note
+  hc exec --on "$m" -i -- python3 - <claude/merge-hooks.py
+  echo "$m: agent-note is in place. Sessions there pick it up on their next prompt."
+  exit 0
+fi
+
 . ./paths.sh
 
 if [ ! -d "$H" ]; then
@@ -30,21 +44,7 @@ done
 chmod +x "$HOME/.local/bin/agent-note"
 
 # Claude Code: run agent-note on UserPromptSubmit and Stop (added once, never twice).
-settings="$HOME/.claude/settings.json"
-mkdir -p "$HOME/.claude"
-[ -f "$settings" ] || echo '{}' >"$settings"
-hook='{"type":"command","command":"\"$HOME/.local/bin/agent-note\"","timeout":5,"async":true}'
-jq --argjson h "$hook" '
-  def add(ev): .hooks[ev] = ((.hooks[ev] // [])
-    | if any(.[]?.hooks[]?; (.command // "") | test("agent-note")) then . else . + [{hooks: [$h]}] end);
-  add("UserPromptSubmit") | add("Stop")' "$settings" >"$settings.new"
-if jq -e . "$settings.new" >/dev/null && ! jq -S . "$settings" | cmp -s - <(jq -S . "$settings.new"); then
-  keep "$settings"
-  mv "$settings.new" "$settings"
-  echo "Claude Code: hooks added to ~/.claude/settings.json"
-else
-  rm -f "$settings.new"
-fi
+python3 claude/merge-hooks.py
 
 # postkey hands ⌘G back to VS Code. The Command Line Tools' default SDK can be newer
 # than its compiler; then an older SDK that links is used.
