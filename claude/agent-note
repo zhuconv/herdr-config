@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Claude Code hook for Herdr's ⌃Tab agent switcher (~/.config/herdr-app/mods/agent-switcher).
+
+UserPromptSubmit: the start of the prompt goes in the hc label note.prompt.
+Stop: the end of the reply (its last two lines) goes in note.said.
+Both land on the hc terminal the agent runs in ($HC_TERMINAL_ID); outside hc it does
+nothing. It prints nothing (a UserPromptSubmit hook's output would join the prompt) and
+always exits 0, so it never gets in Claude's way.
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+
+
+def main():
+    term = os.environ.get("HC_TERMINAL_ID")
+    if not term:
+        return
+    event = json.load(sys.stdin)
+    name = event.get("hook_event_name")
+    if name == "UserPromptSubmit":
+        key, text = "note.prompt", " ".join((event.get("prompt") or "").split())[:160]
+    elif name == "Stop":
+        reply = event.get("last_assistant_message") or last_reply(event.get("transcript_path"))
+        key, text = "note.said", gist(reply)
+    else:
+        return
+    if text:
+        hc = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
+        subprocess.run([hc, "label", term, f"{key}={text}"], capture_output=True, timeout=4)
+
+
+CJK = re.compile(r"[\u2e80-\u9fff\uff00-\uffef]")
+
+
+def width(s):
+    return sum(2 if CJK.match(c) else 1 for c in s)
+
+
+def head(s, n):
+    """The start of s that fits n columns, not cutting an English word in two."""
+    out, w = "", 0
+    for c in s:
+        w += width(c)
+        if w > n:
+            word = lambda x: x.isascii() and x.isalnum()
+            if out and word(out[-1]) and word(c) and " " in out:
+                out = out[: out.rindex(" ")]
+            break
+        out += c
+    return out.rstrip()
+
+
+def tail(s, n):
+    return head(s[::-1], n)[::-1].lstrip()
+
+
+def gist(reply):
+    """The reply's first sentence …… its last sentence, as plain text: no markdown marks,
+    code blocks or tables. At most ~100 columns, about three card lines (CJK counts double)."""
+    lines, fenced = [], False
+    for raw in (reply or "").splitlines():
+        if raw.strip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced or raw.lstrip().startswith("|"):
+            continue
+        line = re.sub(r"^\s*(?:#+|[-*>]|\d+\.)\s+", "", raw).replace("**", "").replace("`", "")
+        line = " ".join(line.split())
+        if line:
+            lines.append(line)
+    sentences = [x.strip() for l in lines for x in re.split(r"(?<=[。！？])|(?<=[.!?])\s+", l) if x.strip()]
+    if not sentences:
+        return ""
+    first, last = sentences[0], sentences[-1]
+    whole = first if len(sentences) == 1 else first + " " + last if len(sentences) == 2 else None
+    if whole and width(whole) <= 100:
+        return whole
+    return head(first, 40) + " …… " + tail(last, 60)
+
+
+def last_reply(path):
+    """The text of the last assistant entry in a transcript (JSON lines), read from its tail."""
+    if not path:
+        return None
+    with open(path, "rb") as f:
+        f.seek(0, os.SEEK_END)
+        f.seek(max(0, f.tell() - 1_000_000))
+        lines = f.read().decode("utf-8", "replace").splitlines()
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        if entry.get("type") != "assistant":
+            continue
+        content = (entry.get("message") or {}).get("content") or []
+        texts = [b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"]
+        text = "\n".join(t for t in texts if t.strip())
+        if text:
+            return text
+    return None
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception:
+        pass
+    sys.exit(0)
