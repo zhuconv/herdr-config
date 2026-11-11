@@ -42,7 +42,7 @@ git pull && ./install.sh
 |---|---|
 | `herdr-app/keys.json` | 快捷键：⌘W 分层关闭、⌘⇧W/⌘⇧T 恢复、⌘HJKL 切窗格、⌘G 跳到响铃的 agent、⌃Tab 切换最近的 agent |
 | `herdr-app/layouts/my-main.json` | 布局 my-main：灰蓝色焦点框，左栏上面是 my-projects、下面是 my-agents |
-| `herdr-app/mods/my-projects/` | 左上角 Projects：project 由若干个"机器 · 目录"组成，对话按所在目录归类（子目录跟父目录走），没归类的在 Unsorted。把目录胶囊拖到某个 project（或拖回 Unsorted），或者右键它移动、新建 project；点开胶囊，路径右边的 + 在该目录新开 Claude；右键 project 改名、换图标或删除（目录回到 Unsorted）；拖动 project 排序。shell 不在这里，用 ⌃1–⌃9 切 space |
+| `herdr-app/mods/my-projects/` | 左上角 Projects：project 由若干个"机器 · 目录"组成，对话按所在目录归类（子目录跟父目录走），没归类的在 Unsorted。拖动目录胶囊可以在组内排序，或拖进别的 project（拖回 Unsorted 也行），也可以右键它移动、新建 project；点开胶囊，路径右边的 + 在该目录新开 Claude；右键 project 改名、换图标或删除（目录回到 Unsorted）；拖动 project 排序。shell 不在这里，用 ⌃1–⌃9 切 space |
 | `herdr-app/mods/my-tabs/` | 标签栏：Overview 按钮、关闭可恢复（reopen.js）、⌘G（waiting.js）、⌃Tab 的访问顺序（recent.js） |
 | `herdr-app/mods/agent-switcher/` | ⌃Tab 弹窗 |
 | `herdr-app/mods/my-agents/` | 左栏 Agents 列表，显示成 "agent · space" |

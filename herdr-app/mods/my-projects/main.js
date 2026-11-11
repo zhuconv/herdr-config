@@ -2,25 +2,28 @@
 // machine; a conversation (an agent) belongs to the project holding the directory it runs
 // in or its nearest parent, else it waits in Unsorted. A group shows a pill per directory,
 // folded until clicked; an open pill's path has a + that starts Claude in that directory.
-// Drag a pill onto another group, or right-click it, to move its directory (into a
-// project, a new one, or back to Unsorted); right-click a project to rename it, change its
-// icon or delete it (its directories go back to Unsorted); drag a project's row to
-// reorder. Shells aren't listed: the tab bar and ⌃1–⌃9 reach them.
+// Drag a pill among its group's pills to reorder them, or onto another group to move its
+// directory there; right-click it to move it (into a project, a new one, or back to
+// Unsorted). Right-click a project to rename it, change its icon or delete it (its
+// directories go back to Unsorted); drag a project's row to reorder the projects. Shells
+// aren't listed: the tab bar and ⌃1–⌃9 reach them.
 //
 // Kept in shared state: "my-projects.state" ({ projects: [{ name, dirs }], loose }; see
-// model.js), "my-projects.icons" (each project's icon) and "my-projects.order" (the
-// dragged order). This copy's localStorage: folds, open pills, when each agent last
+// model.js), "my-projects.icons" (each project's icon), "my-projects.order" (the projects'
+// dragged order) and "my-projects.pills" (the pills' dragged order: directory keys, one
+// list for all groups). This copy's localStorage: folds, open pills, when each agent last
 // changed state. The same mod draws its popups (props.role).
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
 const ICONS = `${MOD}.icons`;
 const ORDER = `${MOD}.order`;
+const PILLS = `${MOD}.pills`;
 // Until 2026-11-11 projects were folder names and this listed the ones made with +.
 // Read only to start STATE: those come along, empty; everything else starts Unsorted.
 const KEPT = `${MOD}.list`;
@@ -112,7 +115,22 @@ function conversations() {
   });
 }
 
-const projectsNow = (convs = conversations()) => group(convs, state(), { home: home(), order: shared(ORDER) ?? [] });
+const projectsNow = (convs = conversations()) => group(convs, state(), { home: home(), order: shared(ORDER) ?? [], pills: shared(PILLS) ?? [] });
+
+// One group's pills as shown: a project's name, or UNSORTED.
+function pillKeys(name) {
+  const g = projectsNow(), box = name === UNSORTED ? g.unsorted : g.projects.find((p) => p.name === name);
+  return (box?.pills ?? []).map((pl) => pl.key);
+}
+
+// Moves a directory to a project (null: Unsorted), or within its own: before or after one of
+// that group's pills (slot: { at, after }), else to the end of them.
+function moveDirTo(key, to, slot = null) {
+  const keys = pillKeys(to ?? UNSORTED);
+  setShared(PILLS, withGroup(shared(PILLS) ?? [], slot ? place(keys, key, slot.at, slot.after) : [...keys.filter((k) => k !== key), key]));
+  const s = state();
+  if (ownerOf(key, s.projects, s.loose) !== to) save(moveDir(s, key, to));
+}
 const iconOf = (name) => (shared(ICONS) ?? {})[name] ?? assignIcon(name);
 const homeOf = (machine) => (machine ? null : home());
 const where = (key) => { const d = splitDir(key); return `${d.machine ?? "local"} · ${shortPath(d.path, homeOf(d.machine))}`; };
@@ -166,8 +184,11 @@ export default class Projects extends View {
     // starts on the press and counts once the pointer has gone 4 px, so a click stays a click.
     this.drag = null; // { kind: "project", name } or { kind: "dir", key, from, grab, look }; x, y, moved, at
     this.over = null; // the group under the pointer while dragging: a project's name, or UNSORTED
-    this.hit = null; // the group the pointer event now going up the tree passed through
+    this.overPill = null; // the pill under it, and which half: { key, after }
+    this.hit = null; // the group and pill the pointer event now going up the tree passed through
+    this.hitPill = null;
     this.names = []; // the projects as shown, in order
+    this.shown = {}; // each group's pills as shown (keys), by group
     // The list's scroll position, kept across redraws: a fold must not send it to the top.
     this.scroll = ScrollHandle.new();
     cx.timer.every(30000, (cx) => cx.notify());
@@ -230,42 +251,61 @@ export default class Projects extends View {
     this.save();
   }
 
-  // Where the drag would land: another project, for a project's row; any other group, for a pill.
+  // Where a dragged pill would go among the pills it's over: before or after one of them
+  // ({ at, after }), when that changes their order. Off a pill, it goes to the end.
+  slot() {
+    const d = this.drag, h = this.overPill;
+    if (d?.kind !== "dir" || !d.moved || !h || this.over === null) return null;
+    const keys = this.shown[this.over] ?? [];
+    if (!keys.includes(h.key)) return null;
+    if (this.over === d.from && place(keys, d.key, h.key, h.after).join("\n") === keys.join("\n")) return null;
+    return { at: h.key, after: h.after };
+  }
+
+  // The group the drag would land in: another project, for a project's row; for a pill,
+  // another group, or its own at a new place.
   target() {
     const d = this.drag, o = this.over;
-    if (!d?.moved || o === null || o === (d.kind === "dir" ? d.from : d.name)) return null;
-    return d.kind === "project" && o === UNSORTED ? null : o;
+    if (!d?.moved || o === null) return null;
+    if (d.kind === "project") return o !== d.name && o !== UNSORTED ? o : null;
+    return o !== d.from || this.slot() ? o : null;
   }
 
   press(drag, e) {
     this.drag = { ...drag, x: e.position.x, y: e.position.y, moved: false, at: null };
     this.over = null;
+    this.overPill = null;
   }
 
-  // The pointer moved over the panel. The groups it passed through on the way said which.
+  // The pointer moved over the panel. The group and pill it passed through on the way said which.
   dragMove(e, cx) {
-    const hit = this.hit, d = this.drag;
+    const hit = this.hit, hitPill = this.hitPill, d = this.drag;
     this.hit = null;
+    this.hitPill = null;
     if (!d) return;
     if (!d.moved && Math.abs(e.position.x - d.x) + Math.abs(e.position.y - d.y) < 4) return;
     const was = d.moved ? this.target() : undefined;
     d.moved = true;
     this.over = hit;
+    // The pill's box, from window pixels to the panel's own (both screen pixels).
+    const ox = e.position.x - e.local_position.x, oy = e.position.y - e.local_position.y, b = hitPill?.box;
+    this.overPill = hitPill && { key: hitPill.key, after: hitPill.after, rect: b ? { x: b.x - ox, y: b.y - oy, w: b.width, h: b.height } : null };
     if (d.kind === "dir") { d.at = e.local_position; cx.notify(); } // the pill goes with the pointer
     else if (this.target() !== was) cx.notify();
   }
 
-  // The release: the drag lands where target() says, or nowhere.
+  // The release: the drag lands where target() and slot() say, or nowhere.
   drop(cx) {
-    const d = this.drag, to = this.target();
+    const d = this.drag, to = this.target(), slot = this.slot();
     this.drag = null;
     this.over = null;
+    this.overPill = null;
     if (!d) return;
     if (to !== null && d.kind === "project") setShared(ORDER, moveTo(this.names, d.name, to));
     else if (to !== null) {
-      save(moveDir(state(), d.key, to === UNSORTED ? null : to));
+      moveDirTo(d.key, to === UNSORTED ? null : to, slot);
       // An open pill stays open where it lands.
-      if (this.open[d.from] === d.key) { this.open[d.from] = null; this.open[to] = d.key; this.save(); }
+      if (to !== d.from && this.open[d.from] === d.key) { this.open[d.from] = null; this.open[to] = d.key; this.save(); }
     }
     cx.notify();
   }
@@ -274,6 +314,7 @@ export default class Projects extends View {
     if (!this.drag) return;
     this.drag = null;
     this.over = null;
+    this.overPill = null;
     cx.notify();
   }
 
@@ -320,8 +361,9 @@ export default class Projects extends View {
       .child(svg(chrome(h.closed ? "chevron-right" : "chevron-down")).size(11).flex_none().text_color(t.dim));
   }
 
-  // A directory's pill. Pressed and dragged, a copy goes with the pointer (ghost()) and the
-  // directory moves to the group it's let go over.
+  // A directory's pill. Pressed and dragged, a copy goes with the pointer (ghost()); let go
+  // on a pill, it goes before or after it (slotLine(), by which half), else to the end of the
+  // group it's over. Another group's pill or group moves the directory there.
   pill(t, id, ring, o) {
     return h_flex().id(id).h(22).flex_none().pl(7).pr(8).gap(5).items_center().rounded(11)
       .border_1().border_color(o.here ? ring : t.input).when(o.open, (el) => el.bg(t.selected))
@@ -329,6 +371,9 @@ export default class Projects extends View {
       .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(o.tooltip)
       .on_mouse_down("left", (e) => this.press({ kind: "dir", key: o.key, from: o.group, grab: e.local_position ?? { x: 12, y: 11 },
         look: { machine: o.machine, label: o.label, detail: o.detail, count: o.count } }, e))
+      .on_mouse_move((e) => {
+        if (this.drag?.kind === "dir") this.hitPill = { key: o.key, after: e.local_position.x > (e.bounds?.width ?? 0) / 2, box: e.bounds };
+      })
       .on_click((_e, cx) => { if (this.drag?.moved) return; o.click(cx); this.save(); cx.notify(); })
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); o.menu(); })
       .children(this.pillParts(t, o));
@@ -354,6 +399,16 @@ export default class Projects extends View {
     return h_flex().absolute().left((d.at.x - d.grab.x) / z).top((d.at.y - d.grab.y) / z).h(22).pl(7).pr(8).gap(5).items_center().rounded(11)
       .border_1().border_color(ring).bg(t.popover).shadow_md()
       .children(this.pillParts(t, d.look));
+  }
+
+  // Where the dragged pill would go: a line in the 5 px gap before or after the pill it's
+  // over. Drawn above the dragged copy, which would otherwise hide it.
+  slotLine(ring) {
+    const r = this.overPill?.rect;
+    if (!this.slot() || !r) return null;
+    const z = Number(settings()?.zoom) || 1;
+    const mid = this.overPill.after ? r.x + r.w + 2.5 * z : r.x - 2.5 * z;
+    return div().absolute().left(mid / z - 1).top(r.y / z + 2).w(2).h(r.h / z - 4).rounded(1).bg(ring);
   }
 
   // An open pill's full path, with a + that starts Claude there. Right-click: its directory's menu.
@@ -399,7 +454,7 @@ export default class Projects extends View {
     });
     const d = this.drag, to = this.target();
     const from = d?.kind === "project" ? this.names.indexOf(d.name) : -1, at = this.names.indexOf(p.name);
-    const line = d?.kind === "project" && to === p.key, box = d?.kind === "dir" && to === p.key;
+    const line = d?.kind === "project" && to === p.key, box = d?.kind === "dir" && to === p.key && to !== d.from;
     return v_flex().id(`group-${hash(p.key)}`).relative().flex_none().rounded(8)
       .on_mouse_move(() => { this.hit = p.key; })
       .when(d?.kind === "project" && d.name === p.name && to !== null, (el) => el.opacity(0.5))
@@ -421,7 +476,7 @@ export default class Projects extends View {
         machine: pl.machine, label: pl.label, detail: pl.detail, count: String(pl.convs.length), dim: !pl.convs.length,
         open: pl === shown, here: pl.convs.some((c) => c.focused),
         status: pl === shown ? null : loud(urgent(pl.convs.map((c) => c.status))),
-        tooltip: `${pl.machine ?? "This computer"}: ${shortPath(pl.path, homeOf(pl.machine))}. Drag it onto a project, or right-click, to move this directory.`,
+        tooltip: `${pl.machine ?? "This computer"}: ${shortPath(pl.path, homeOf(pl.machine))}. Drag to reorder, or onto another project; right-click to move it.`,
         click: () => { this.open[p.key] = pl === shown ? null : pl.key; },
         menu: () => openDirMenu(pl.key),
       }))),
@@ -458,6 +513,8 @@ export default class Projects extends View {
     const icons = withIcons(shared(ICONS), projects.map((p) => p.name));
     if (icons) setShared(ICONS, icons);
     this.names = projects.map((p) => p.name);
+    this.shown = Object.fromEntries([...projects.map((p) => [p.name, p.pills.map((pl) => pl.key)]),
+      ...(unsorted ? [[UNSORTED, unsorted.pills.map((pl) => pl.key)]] : [])]);
     if (narrow()) return this.rail(t, projects, unsorted);
     const ring = ringColor(t);
     const rows = [
@@ -465,7 +522,7 @@ export default class Projects extends View {
       ...(unsorted ? [this.project(t, { ...unsorted, key: UNSORTED, name: UNSORTED, label: "Unsorted" }, ring, now)] : []),
       ...(!projects.length && !unsorted ? [div().px(8).py(6).text_size(12).text_color(t.dim).child("No conversations yet.")] : []),
     ];
-    const ghost = this.ghost(t, ring);
+    const ghost = this.ghost(t, ring), slotLine = this.slotLine(ring);
     return v_flex().id("projects-panel").relative().overflow_hidden().size_full().min_h(0).bg(t.chrome).text_size(13)
       // Drags. Each group notes that the pointer is over it (this.hit) before this hears the
       // move; a release anywhere but on a group it can land in changes nothing.
@@ -483,7 +540,8 @@ export default class Projects extends View {
         // Rows with menus of their own stop their right-clicks; what reaches here is blank space.
         .on_mouse_down("right", () => openBlank())
         .children(rows))
-      .when(Boolean(ghost), (el) => el.child(ghost));
+      .when(Boolean(ghost), (el) => el.child(ghost))
+      .when(Boolean(slotLine), (el) => el.child(slotLine));
   }
 }
 
@@ -556,7 +614,7 @@ class Popup {
   // A directory's menu: the projects it can go to, a new one, back to Unsorted.
   dirView(t, p) {
     const key = p.dir, { from, names } = dirTargets(key);
-    const go = (to) => () => { save(moveDir(state(), key, to)); closeOverlay(p.overlay); };
+    const go = (to) => () => { moveDirTo(key, to); closeOverlay(p.overlay); };
     return v_flex().id("dir-menu").track_focus(this.handle).on_key_down(esc).size_full().p(5).bg(t.popover).text_size(12.8)
       .child(h_flex().h(26).flex_none().px(8).items_center()
         .child(div().min_w(0).truncate().text_size(11).text_color(t.dim).child(`Move ${where(key)} to`)))

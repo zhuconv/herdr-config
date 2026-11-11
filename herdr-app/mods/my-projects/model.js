@@ -167,7 +167,31 @@ export function moveTo(names, from, to) {
 // conversations: [{ machine, cwd, order, ... }]. A pill per directory a conversation runs
 // in, plus each project's own directories that have none. Projects in the dragged order;
 // Unsorted apart (null when empty).
-export function group(convs, state, { home, order = [] } = {}) {
+// A group's pills in the order they were dragged into; the rest after them, by machine,
+// then folder (a parent before its subfolders).
+export function orderPills(pills, order = []) {
+  const at = new Map(order.map((k, i) => [k, i]));
+  const pos = (p) => (at.has(p.key) ? at.get(p.key) : Infinity);
+  return [...pills].sort((a, b) => pos(a) - pos(b) || cmpMachine(a.machine, b.machine) || byName(a.path, b.path));
+}
+
+// A group's pill keys after `key` is put before or after the pill `at`.
+export function place(keys, key, at, after) {
+  const list = keys.filter((k) => k !== key);
+  const i = list.indexOf(at);
+  if (i < 0) return keys;
+  list.splice(after ? i + 1 : i, 0, key);
+  return list;
+}
+
+// The dragged pill order is one list for every group (a directory is in one group at a
+// time); this gives one group's pills the order `keys`.
+export function withGroup(order, keys) {
+  const mine = new Set(keys);
+  return [...order.filter((k) => !mine.has(k)), ...keys];
+}
+
+export function group(convs, state, { home, order = [], pills: pillOrder = [] } = {}) {
   const maps = new Map(state.projects.map((p) => [p.name, new Map()]));
   const loose = new Map();
   const add = (map, key) => { if (!map.has(key)) map.set(key, []); return map.get(key); };
@@ -177,14 +201,14 @@ export function group(convs, state, { home, order = [] } = {}) {
     const who = ownerOf(key, state.projects, state.loose ?? []);
     add(who !== null && maps.has(who) ? maps.get(who) : loose, key).push(c);
   }
-  const pills = (map) => [...map.entries()].map(([key, list]) => {
+  const pills = (map) => orderPills([...map.entries()].map(([key, list]) => {
     const { machine, path } = splitDir(key);
     return {
       key, machine, path, label: machine ?? "local",
       detail: isHome(path, machine ? null : home) ? "~" : baseName(path),
       convs: [...list].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
     };
-  }).sort((a, b) => cmpMachine(a.machine, b.machine) || byName(a.path, b.path));
+  }), pillOrder);
   const box = (map) => { const ps = pills(map); return { pills: ps, convs: ps.flatMap((p) => p.convs) }; };
   return {
     projects: ordered(state.projects.map((p) => p.name), order).map((name) => ({ name, ...box(maps.get(name)) })),
