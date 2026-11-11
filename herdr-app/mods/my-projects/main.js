@@ -21,7 +21,7 @@ const MOD = "my-projects";
 const STATE = `${MOD}.state`;
 const ICONS = `${MOD}.icons`;
 const ORDER = `${MOD}.order`;
-// Until 2026-11-12 projects were folder names and this listed the ones made with +.
+// Until 2026-11-11 projects were folder names and this listed the ones made with +.
 // Read only to start STATE: those come along, empty; everything else starts Unsorted.
 const KEPT = `${MOD}.list`;
 const UNSORTED = "\u0000unsorted";
