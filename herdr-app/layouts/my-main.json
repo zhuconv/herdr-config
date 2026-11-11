@@ -164,7 +164,8 @@
           },
           "size": {
             "px": 28
-          }
+          },
+          "hidden": true
         }
       ],
       "resizable": false

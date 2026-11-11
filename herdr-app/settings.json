@@ -1,11 +1,11 @@
 {
-  "zoom": 1.0,
+  "zoom": 1.1,
   "sounds": {
     "enabled": true
   },
-  "font_ligatures": false,
-  "minimum_contrast": 1.0,
-  "theme": "warp-dracula",
   "font": "Hack",
-  "font_size": 15
+  "font_size": 15,
+  "font_ligatures": false,
+  "minimum_contrast": 1,
+  "theme": "warp-dracula"
 }
