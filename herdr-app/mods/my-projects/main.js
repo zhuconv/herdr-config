@@ -15,7 +15,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, run, theme, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, moveTo, urgent, duration, nameOf, shortPath, splitDir, baseName, isHome } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, moveTo, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -138,6 +138,8 @@ function openDirMenu(key) {
   popup({ role: "dir", dir: key }, 236, 10 + 26 + Math.min(i.names.length, 8) * 30 + (i.names.length ? 9 : 0) + 30 + (i.from !== null ? 30 : 0));
 }
 const openProject = (project) => popup({ role: "project", project }, 212, 10 + 30 + 9 + 30);
+// Right-click on the list where there's no row (or on Unsorted's row).
+const openBlank = () => popup({ role: "blank" }, 200, 10 + 30 + 9 + 30 + 30);
 const openNew = (dir = null) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "new", dir } });
 // Deleting goes through Herdr's own confirm dialog, which runs "my-projects.delete <name>".
 function askDelete(name) {
@@ -183,6 +185,9 @@ export default class Projects extends View {
         else if (verb === "icon" && arg) openIcon(arg);
         else if (verb === "menu" && arg) openProject(arg);
         else if (verb === "delete" && arg) save(deleteProject(state(), arg));
+        // From the blank-area menu (a popup is another copy of this mod: it asks this one).
+        else if (verb === "fold-all") { this.closed = new Set([...this.names, UNSORTED]); this.save(); }
+        else if (verb === "unfold-all") { this.closed = new Set(); this.save(); }
         cx.notify();
       }
     });
@@ -226,7 +231,8 @@ export default class Projects extends View {
       .cursor_pointer().hover((s) => s.bg(t.hover))
       .when(Boolean(h.drag), (el) => el.on_mouse_down("left", () => { this.moving = h.drag; this.overMove = h.drag; }))
       .on_click((_e, cx) => { h.toggle(); this.save(); cx.notify(); })
-      .when(Boolean(h.menu), (el) => el.on_mouse_down("right", () => h.menu()))
+      // A row with its own menu keeps the right-click from the list's blank-area menu.
+      .when(Boolean(h.menu), (el) => el.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); h.menu(); }))
       .child(logo)
       .child(div().flex_1().min_w(0).truncate().font_medium().text_color(h.dim ? t.muted : t.foreground).child(h.name))
       .when(h.closed && Boolean(h.status), (el) => el.child(mark(t, h.status)))
@@ -240,7 +246,7 @@ export default class Projects extends View {
       .border_1().border_color(o.here ? ring : t.input).when(o.open, (el) => el.bg(t.selected))
       .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(o.tooltip)
       .on_click((_e, cx) => { o.click(cx); this.save(); cx.notify(); })
-      .on_mouse_down("right", () => o.menu())
+      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); o.menu(); })
       .child(svg(chrome(o.machine ? "server" : "monitor")).size(11).flex_none().text_color(t.muted))
       .child(div().flex_none().text_size(11.5).text_color(o.dim ? t.muted : t.foreground).child(o.label))
       .child(div().min_w(0).max_w(104).truncate().text_size(11.5).text_color(t.muted).child(o.detail))
@@ -248,9 +254,10 @@ export default class Projects extends View {
       .child(div().flex_none().text_size(11).text_color(t.muted).child(o.count));
   }
 
-  // An open pill's full path, with a + that starts Claude there.
+  // An open pill's full path, with a + that starts Claude there. Right-click: its directory's menu.
   pathRow(t, pl) {
-    return h_flex().h(20).flex_none().pl(35).pr(2).gap(6).items_center()
+    return h_flex().id(`path-${hash(pl.key)}`).h(20).flex_none().pl(35).pr(2).gap(6).items_center()
+      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openDirMenu(pl.key); })
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(shortPath(pl.path, homeOf(pl.machine))))
       .child(div().id(`new-${hash(pl.key)}`).size(20).flex_none().rounded(5).flex().items_center().justify_center()
         .text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("New Claude session here")
@@ -266,6 +273,8 @@ export default class Projects extends View {
       .when(c.focused, (el) => el.bg(t.selected)).when(!c.focused, (el) => el.hover((s) => s.bg(t.hover)))
       .cursor_pointer()
       .on_click(() => run("pane.focus", { pane: c.pane }))
+      // Right-click: the menu of the directory it runs in (projects hold directories).
+      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openDirMenu(dirKey(c.machine, c.cwd)); })
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(quiet ? t.muted : t.foreground).child(c.name))
       .when(Boolean(since), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - since))))
@@ -358,13 +367,16 @@ export default class Projects extends View {
       ...(!projects.length && !unsorted ? [div().px(8).py(6).text_size(12).text_color(t.dim).child("No conversations yet.")] : []),
     ];
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
-      .child(h_flex().h(31).flex_none().pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
+      .child(h_flex().id("projects-header").h(31).flex_none().pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
+        .on_mouse_down("right", () => openBlank())
         .child("Projects").child(this.plus(t)))
       // Named, with its own handle: an element without a name is identified by its place in
       // the tree, which moves when a fold changes the rows, and its scroll position goes with it.
       .child(v_flex().id("projects-list").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().track_scroll(this.scroll).mode("always")
         // A drag released anywhere but on a project changes nothing.
         .on_mouse_up("left", (_e, cx) => { if (this.moving !== null) { this.moving = null; this.overMove = null; cx.notify(); } })
+        // Rows with menus of their own stop their right-clicks; what reaches here is blank space.
+        .on_mouse_down("right", () => openBlank())
         .children(rows));
   }
 }
@@ -453,6 +465,16 @@ class Popup {
         () => { closeOverlay(p.overlay); askDelete(name); }, t.blocked));
   }
 
+  // The blank-area menu. Folding is the list's own state, so the list does it (a command).
+  blankView(t, p) {
+    const then = (fn) => () => { closeOverlay(p.overlay); fn(); };
+    return v_flex().id("blank-menu").track_focus(this.handle).on_key_down(esc).size_full().p(5).bg(t.popover).text_size(12.8)
+      .child(this.item(t, "bm-new", svg(chrome("folder-plus")).size(14).flex_none().text_color(t.muted), "New project…", then(() => openNew())))
+      .child(div().mx(7).my(4).h(1).flex_none().bg(t.border))
+      .child(this.item(t, "bm-fold", svg(chrome("chevron-right")).size(14).flex_none().text_color(t.muted), "Fold all", then(() => run(`${MOD}.fold-all`))))
+      .child(this.item(t, "bm-unfold", svg(chrome("chevron-down")).size(14).flex_none().text_color(t.muted), "Unfold all", then(() => run(`${MOD}.unfold-all`))));
+  }
+
   newView(t, p) {
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
@@ -475,6 +497,7 @@ class Popup {
     if (p.role === "icon") return this.iconView(t, p);
     if (p.role === "dir") return this.dirView(t, p);
     if (p.role === "project") return this.projectView(t, p);
+    if (p.role === "blank") return this.blankView(t, p);
     return this.newView(t, p);
   }
 }
