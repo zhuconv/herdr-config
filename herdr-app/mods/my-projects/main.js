@@ -2,10 +2,10 @@
 // machine; a conversation (an agent) belongs to the project holding the directory it runs
 // in or its nearest parent, else it waits in Unsorted. A group shows a pill per directory,
 // folded until clicked; an open pill's path has a + that starts Claude in that directory.
-// Right-click a pill to move its directory (into a project, a new one, or back to
-// Unsorted); right-click a project to change its icon or delete it (its directories go
-// back to Unsorted); drag a project's row to reorder. Shells aren't listed: the tab bar
-// and ⌃1–⌃9 reach them.
+// Drag a pill onto another group, or right-click it, to move its directory (into a
+// project, a new one, or back to Unsorted); right-click a project to rename it, change its
+// icon or delete it (its directories go back to Unsorted); drag a project's row to
+// reorder. Shells aren't listed: the tab bar and ⌃1–⌃9 reach them.
 //
 // Kept in shared state: "my-projects.state" ({ projects: [{ name, dirs }], loose }; see
 // model.js), "my-projects.icons" (each project's icon) and "my-projects.order" (the
@@ -14,8 +14,8 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { agents, panes, terminals, spaces, run, theme, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, moveTo, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome } from "./model.js";
+import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand } from "herdr";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -46,6 +46,9 @@ function ringColor(t) {
   const c = find(layout(), "main")?.content?.pane?.focus?.color;
   return (c && (t[c] ?? c)) || t.ring || t.accent;
 }
+
+// A color at some opacity ("1f" = 12%), when it's a plain #rrggbb; else the fallback.
+const faint = (c, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(c ?? "") ? c + alpha : fallback);
 
 function programIcon(p, size, color) {
   if (!p?.icon) return null;
@@ -137,10 +140,11 @@ function openDirMenu(key) {
   const i = dirTargets(key);
   popup({ role: "dir", dir: key }, 236, 10 + 26 + Math.min(i.names.length, 8) * 30 + (i.names.length ? 9 : 0) + 30 + (i.from !== null ? 30 : 0));
 }
-const openProject = (project) => popup({ role: "project", project }, 212, 10 + 30 + 9 + 30);
+const openProject = (project) => popup({ role: "project", project }, 212, 10 + 30 + 30 + 9 + 30);
 // Right-click on the list where there's no row (or on Unsorted's row).
 const openBlank = () => popup({ role: "blank" }, 200, 10 + 30 + 9 + 30 + 30);
 const openNew = (dir = null) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "new", dir } });
+const openRename = (project) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "rename", project } });
 // Deleting goes through Herdr's own confirm dialog, which runs "my-projects.delete <name>".
 function askDelete(name) {
   const n = projectsNow().projects.find((p) => p.name === name)?.pills.length ?? 0;
@@ -158,8 +162,11 @@ export default class Projects extends View {
     this.closed = new Set(read("closed", []));
     this.open = read("open", {});
     this.changed = read("changed", {});
-    this.moving = null; // the project being dragged
-    this.overMove = null; // the project it's over
+    // A drag: a project's row (to reorder) or a directory's pill (into another group). It
+    // starts on the press and counts once the pointer has gone 4 px, so a click stays a click.
+    this.drag = null; // { kind: "project", name } or { kind: "dir", key, from, grab, look }; x, y, moved, at
+    this.over = null; // the group under the pointer while dragging: a project's name, or UNSORTED
+    this.hit = null; // the group the pointer event now going up the tree passed through
     this.names = []; // the projects as shown, in order
     // The list's scroll position, kept across redraws: a fold must not send it to the top.
     this.scroll = ScrollHandle.new();
@@ -184,7 +191,9 @@ export default class Projects extends View {
         if (verb === "new") openNew();
         else if (verb === "icon" && arg) openIcon(arg);
         else if (verb === "menu" && arg) openProject(arg);
-        else if (verb === "delete" && arg) save(deleteProject(state(), arg));
+        else if (verb === "delete" && arg) { save(deleteProject(state(), arg)); this.forget(arg); }
+        // From the rename dialog: ["old name", "new name"].
+        else if (verb === "rename" && arg) { try { const [from, to] = JSON.parse(arg); this.rename(String(from), String(to)); } catch {} }
         // From the blank-area menu (a popup is another copy of this mod: it asks this one).
         else if (verb === "fold-all") { this.closed = new Set([...this.names, UNSORTED]); this.save(); }
         else if (verb === "unfold-all") { this.closed = new Set(); this.save(); }
@@ -196,6 +205,76 @@ export default class Projects extends View {
   save() {
     localStorage.setItem("closed", JSON.stringify([...this.closed]));
     localStorage.setItem("open", JSON.stringify(this.open));
+  }
+
+  // A project's new name, everywhere the old one is kept. Icons and order first, so the
+  // redraw the state write causes already finds them under the new name.
+  rename(from, to) {
+    const s = state(), next = renameProject(s, from, to);
+    if (next === s) return;
+    const icons = shared(ICONS) ?? {};
+    setShared(ICONS, renameIn({ ...icons, [from]: icons[from] ?? iconOf(from) }, from, to));
+    setShared(ORDER, renameIn(shared(ORDER) ?? [], from, to));
+    save(next);
+    const folded = this.closed.delete(from), shown = this.open[from];
+    this.forget(to); // a deleted project's fold, under the name this one takes
+    if (folded) this.closed.add(to);
+    if (shown) this.open[to] = shown;
+    delete this.open[from];
+    this.save();
+  }
+
+  forget(name) {
+    this.closed.delete(name);
+    delete this.open[name];
+    this.save();
+  }
+
+  // Where the drag would land: another project, for a project's row; any other group, for a pill.
+  target() {
+    const d = this.drag, o = this.over;
+    if (!d?.moved || o === null || o === (d.kind === "dir" ? d.from : d.name)) return null;
+    return d.kind === "project" && o === UNSORTED ? null : o;
+  }
+
+  press(drag, e) {
+    this.drag = { ...drag, x: e.position.x, y: e.position.y, moved: false, at: null };
+    this.over = null;
+  }
+
+  // The pointer moved over the panel. The groups it passed through on the way said which.
+  dragMove(e, cx) {
+    const hit = this.hit, d = this.drag;
+    this.hit = null;
+    if (!d) return;
+    if (!d.moved && Math.abs(e.position.x - d.x) + Math.abs(e.position.y - d.y) < 4) return;
+    const was = d.moved ? this.target() : undefined;
+    d.moved = true;
+    this.over = hit;
+    if (d.kind === "dir") { d.at = e.local_position; cx.notify(); } // the pill goes with the pointer
+    else if (this.target() !== was) cx.notify();
+  }
+
+  // The release: the drag lands where target() says, or nowhere.
+  drop(cx) {
+    const d = this.drag, to = this.target();
+    this.drag = null;
+    this.over = null;
+    if (!d) return;
+    if (to !== null && d.kind === "project") setShared(ORDER, moveTo(this.names, d.name, to));
+    else if (to !== null) {
+      save(moveDir(state(), d.key, to === UNSORTED ? null : to));
+      // An open pill stays open where it lands.
+      if (this.open[d.from] === d.key) { this.open[d.from] = null; this.open[to] = d.key; this.save(); }
+    }
+    cx.notify();
+  }
+
+  cancel(cx) {
+    if (!this.drag) return;
+    this.drag = null;
+    this.over = null;
+    cx.notify();
   }
 
   // Stamps conversations whose state changed (done and idle count as one).
@@ -229,8 +308,9 @@ export default class Projects extends View {
         .on_click((_e, cx) => { cx.stop_propagation(); h.iconClick(); }));
     return h_flex().id(`head-${h.id}`).h(30).flex_none().pl(5).pr(8).gap(6).items_center().rounded(8)
       .cursor_pointer().hover((s) => s.bg(t.hover))
-      .when(Boolean(h.drag), (el) => el.on_mouse_down("left", () => { this.moving = h.drag; this.overMove = h.drag; }))
-      .on_click((_e, cx) => { h.toggle(); this.save(); cx.notify(); })
+      .when(Boolean(h.drag), (el) => el.on_mouse_down("left", (e) => this.press({ kind: "project", name: h.drag }, e)))
+      // A release that ends a drag isn't a click.
+      .on_click((_e, cx) => { if (this.drag?.moved) return; h.toggle(); this.save(); cx.notify(); })
       // A row with its own menu keeps the right-click from the list's blank-area menu.
       .when(Boolean(h.menu), (el) => el.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); h.menu(); }))
       .child(logo)
@@ -240,18 +320,40 @@ export default class Projects extends View {
       .child(svg(chrome(h.closed ? "chevron-right" : "chevron-down")).size(11).flex_none().text_color(t.dim));
   }
 
-  // A directory's pill: machine, directory name, (folded: its loudest state), count.
+  // A directory's pill. Pressed and dragged, a copy goes with the pointer (ghost()) and the
+  // directory moves to the group it's let go over.
   pill(t, id, ring, o) {
     return h_flex().id(id).h(22).flex_none().pl(7).pr(8).gap(5).items_center().rounded(11)
       .border_1().border_color(o.here ? ring : t.input).when(o.open, (el) => el.bg(t.selected))
+      .when(o.lifted, (el) => el.opacity(0.35))
       .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(o.tooltip)
-      .on_click((_e, cx) => { o.click(cx); this.save(); cx.notify(); })
+      .on_mouse_down("left", (e) => this.press({ kind: "dir", key: o.key, from: o.group, grab: e.local_position ?? { x: 12, y: 11 },
+        look: { machine: o.machine, label: o.label, detail: o.detail, count: o.count } }, e))
+      .on_click((_e, cx) => { if (this.drag?.moved) return; o.click(cx); this.save(); cx.notify(); })
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); o.menu(); })
-      .child(svg(chrome(o.machine ? "server" : "monitor")).size(11).flex_none().text_color(t.muted))
-      .child(div().flex_none().text_size(11.5).text_color(o.dim ? t.muted : t.foreground).child(o.label))
-      .child(div().min_w(0).max_w(104).truncate().text_size(11.5).text_color(t.muted).child(o.detail))
-      .when(Boolean(o.status), (el) => el.child(mark(t, o.status)))
-      .child(div().flex_none().text_size(11).text_color(t.muted).child(o.count));
+      .children(this.pillParts(t, o));
+  }
+
+  // What a pill shows: machine, directory name, (folded: its loudest state), count.
+  pillParts(t, o) {
+    return [
+      svg(chrome(o.machine ? "server" : "monitor")).size(11).flex_none().text_color(t.muted),
+      div().flex_none().text_size(11.5).text_color(o.dim ? t.muted : t.foreground).child(o.label),
+      div().min_w(0).max_w(104).truncate().text_size(11.5).text_color(t.muted).child(o.detail),
+      ...(o.status ? [mark(t, o.status)] : []),
+      div().flex_none().text_size(11).text_color(t.muted).child(o.count),
+    ];
+  }
+
+  // The dragged pill, where the pointer holds it. Pointer positions are screen pixels; sizes
+  // here are scaled by the zoom setting, so the offset is divided by it.
+  ghost(t, ring) {
+    const d = this.drag;
+    if (d?.kind !== "dir" || !d.moved || !d.at) return null;
+    const z = Number(settings()?.zoom) || 1;
+    return h_flex().absolute().left((d.at.x - d.grab.x) / z).top((d.at.y - d.grab.y) / z).h(22).pl(7).pr(8).gap(5).items_center().rounded(11)
+      .border_1().border_color(ring).bg(t.popover).shadow_md()
+      .children(this.pillParts(t, d.look));
   }
 
   // An open pill's full path, with a + that starts Claude there. Right-click: its directory's menu.
@@ -282,6 +384,8 @@ export default class Projects extends View {
   }
 
   // A project (or Unsorted): its row, its pills, and the open pill's path and conversations.
+  // The whole group is where a drag lands. A dragged project goes next to it (the line:
+  // above it when coming from below, under it from above); a pill goes into it (the box).
   project(t, p, ring, now) {
     const closed = this.closed.has(p.key);
     const head = this.head(t, {
@@ -291,38 +395,33 @@ export default class Projects extends View {
       toggle: () => (closed ? this.closed.delete(p.key) : this.closed.add(p.key)),
       iconClick: p.icon ? () => openIcon(p.name) : null,
       menu: p.icon ? () => openProject(p.name) : null,
-      drag: p.icon ? p.name : null,
+      drag: p.icon ? p.name : null, // Unsorted: always last, not dragged
     });
-    const rows = this.rows(t, p, head, closed, ring, now);
-    if (!p.icon) return rows; // Unsorted: always last, not dragged
-    // The whole group (its row, pills and open conversations) is where a dragged project
-    // lands: the line shows above it when coming from below, under it from above.
-    const from = this.names.indexOf(this.moving), at = this.names.indexOf(p.name);
-    const aimed = this.moving !== null && this.moving !== p.name && this.overMove === p.name;
-    return [v_flex().id(`group-${hash(p.key)}`).relative().flex_none()
-      .when(this.moving === p.name && this.overMove !== p.name, (el) => el.opacity(0.5))
-      .on_mouse_move((_e, cx) => { if (this.moving !== null && this.overMove !== p.name) { this.overMove = p.name; cx.notify(); } })
-      .on_mouse_up("left", (_e, cx) => {
-        if (this.moving !== null && this.moving !== p.name) setShared(ORDER, moveTo(this.names, this.moving, p.name));
-        this.moving = null;
-        this.overMove = null;
-        cx.notify();
-      })
-      .children(rows)
-      .when(aimed, (el) => el.child(div().absolute().left(0).right(0).h(2).rounded(1).bg(ring)
-        .when(from < at, (line) => line.bottom(0)).when(from > at, (line) => line.top(0))))];
+    const d = this.drag, to = this.target();
+    const from = d?.kind === "project" ? this.names.indexOf(d.name) : -1, at = this.names.indexOf(p.name);
+    const line = d?.kind === "project" && to === p.key, box = d?.kind === "dir" && to === p.key;
+    return v_flex().id(`group-${hash(p.key)}`).relative().flex_none().rounded(8)
+      .on_mouse_move(() => { this.hit = p.key; })
+      .when(d?.kind === "project" && d.name === p.name && to !== null, (el) => el.opacity(0.5))
+      .when(box, (el) => el.bg(faint(ring, "1f", t.selected)))
+      .children(this.rows(t, p, head, closed, ring, now))
+      .when(box, (el) => el.child(div().absolute().left(0).right(0).top(0).bottom(0).rounded(8).border_1().border_color(ring)))
+      .when(line, (el) => el.child(div().absolute().left(0).right(0).h(2).rounded(1).bg(ring)
+        .when(from < at, (l) => l.bottom(0)).when(from > at, (l) => l.top(0))));
   }
 
   rows(t, p, head, closed, ring, now) {
     if (closed || !p.pills.length) return [head];
     const shown = p.pills.find((pl) => pl.key === this.open[p.key]);
+    const d = this.drag;
     return [
       head,
       h_flex().flex_none().flex_wrap().gap(5).pl(35).pb(6).children(p.pills.map((pl) => this.pill(t, `pill-${hash(p.key + "\u0000" + pl.key)}`, ring, {
+        key: pl.key, group: p.key, lifted: d?.kind === "dir" && d.moved && d.key === pl.key && d.from === p.key,
         machine: pl.machine, label: pl.label, detail: pl.detail, count: String(pl.convs.length), dim: !pl.convs.length,
         open: pl === shown, here: pl.convs.some((c) => c.focused),
         status: pl === shown ? null : loud(urgent(pl.convs.map((c) => c.status))),
-        tooltip: `${pl.machine ?? "This computer"}: ${shortPath(pl.path, homeOf(pl.machine))}. Right-click to move this directory.`,
+        tooltip: `${pl.machine ?? "This computer"}: ${shortPath(pl.path, homeOf(pl.machine))}. Drag it onto a project, or right-click, to move this directory.`,
         click: () => { this.open[p.key] = pl === shown ? null : pl.key; },
         menu: () => openDirMenu(pl.key),
       }))),
@@ -362,60 +461,76 @@ export default class Projects extends View {
     if (narrow()) return this.rail(t, projects, unsorted);
     const ring = ringColor(t);
     const rows = [
-      ...projects.flatMap((p) => this.project(t, { ...p, key: p.name, icon: iconOf(p.name) }, ring, now)),
-      ...(unsorted ? this.project(t, { ...unsorted, key: UNSORTED, name: UNSORTED, label: "Unsorted" }, ring, now) : []),
+      ...projects.map((p) => this.project(t, { ...p, key: p.name, icon: iconOf(p.name) }, ring, now)),
+      ...(unsorted ? [this.project(t, { ...unsorted, key: UNSORTED, name: UNSORTED, label: "Unsorted" }, ring, now)] : []),
       ...(!projects.length && !unsorted ? [div().px(8).py(6).text_size(12).text_color(t.dim).child("No conversations yet.")] : []),
     ];
-    return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
+    const ghost = this.ghost(t, ring);
+    return v_flex().id("projects-panel").relative().overflow_hidden().size_full().min_h(0).bg(t.chrome).text_size(13)
+      // Drags. Each group notes that the pointer is over it (this.hit) before this hears the
+      // move; a release anywhere but on a group it can land in changes nothing.
+      .on_mouse_move((e, cx) => this.dragMove(e, cx))
+      .on_mouse_up("left", (_e, cx) => this.drop(cx))
+      // Let go outside the panel: forgotten as the pointer leaves, or at the next press.
+      .on_hover((inside, cx) => { if (!inside) this.cancel(cx); })
+      .on_mouse_down("left", (_e, cx) => { if (this.drag?.moved) this.cancel(cx); })
       .child(h_flex().id("projects-header").h(31).flex_none().pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
         .on_mouse_down("right", () => openBlank())
         .child("Projects").child(this.plus(t)))
       // Named, with its own handle: an element without a name is identified by its place in
       // the tree, which moves when a fold changes the rows, and its scroll position goes with it.
       .child(v_flex().id("projects-list").flex_1().min_h(0).px(8).pb(14).overflow_y_scrollbar().track_scroll(this.scroll).mode("always")
-        // A drag released anywhere but on a project changes nothing.
-        .on_mouse_up("left", (_e, cx) => { if (this.moving !== null) { this.moving = null; this.overMove = null; cx.notify(); } })
         // Rows with menus of their own stop their right-clicks; what reaches here is blank space.
         .on_mouse_down("right", () => openBlank())
-        .children(rows));
+        .children(rows))
+      .when(Boolean(ghost), (el) => el.child(ghost));
   }
 }
 
 const esc = (e, cx) => { if (e.key === "escape") { closeOverlay(props().overlay); cx.stop_propagation(); } };
 
-// The popups: a project's icon, a directory's menu, a project's menu, a new project.
+// The popups: a project's icon, a directory's menu, a project's menu, the blank-area menu,
+// and the name dialog (a new project, or renaming one).
 class Popup {
   init(cx) {
     this.handle = cx.focus_handle();
     this.error = null;
     const p = props();
-    if (p.role === "new") {
-      // Moving a directory: its name, selected, so typing replaces it.
+    if (p.role === "new" || p.role === "rename") {
+      // Renaming: the name it has. Moving a directory: the directory's. Selected, so typing replaces it.
       const d = p.dir ? splitDir(p.dir) : null;
-      const value = d && !isHome(d.path, homeOf(d.machine)) ? baseName(d.path) : "";
+      const value = p.role === "rename" ? p.project : d && !isHome(d.path, homeOf(d.machine)) ? baseName(d.path) : "";
       this.input = InputState.new({ value, placeholder: "Project name" });
       if (value) this.input.set_selected_range({ start: 0, end: value.length });
       this.input.on("change", (_e, cx) => { this.error = null; cx.notify(); });
-      this.input.on("submit", (_e, cx) => this.create(cx));
+      this.input.on("submit", (_e, cx) => this.submit(cx));
       this.input.focus();
       cx.timer.after(600, () => this.input.focus());
     } else this.handle.focus();
   }
 
-  create(cx) {
+  submit(cx) {
     const p = props();
     const name = this.input.value().trim().slice(0, 40);
     if (!name) { this.error = "Type a name."; cx.notify(); return; }
-    const s = state();
-    if (!p.dir && s.projects.some((x) => x.name === name)) { this.error = "There's a project with this name."; cx.notify(); return; }
-    save(addProject(s, name, p.dir ?? null));
+    const s = state(), taken = s.projects.some((x) => x.name === name);
+    if (p.role === "rename") {
+      if (name !== p.project && taken) { this.error = "There's a project with this name."; cx.notify(); return; }
+      // The list keeps its folds by name, so it does the renaming (a command).
+      if (name !== p.project) run(`${MOD}.rename ${JSON.stringify([p.project, name])}`);
+    } else {
+      if (!p.dir && taken) { this.error = "There's a project with this name."; cx.notify(); return; }
+      save(addProject(s, name, p.dir ?? null));
+    }
     closeOverlay(p.overlay);
   }
 
+  // A menu row. Pictures (14 px glyphs, 16 px project tiles) get one width, so the words line up.
   item(t, id, pic, text, action, color) {
     return h_flex().id(id).h(30).flex_none().px(8).gap(9).items_center().rounded(7).text_color(color ?? t.foreground)
       .cursor_pointer().hover((s) => s.bg(t.hover)).on_click(action)
-      .child(pic).child(div().flex_1().min_w(0).truncate().child(text));
+      .child(h_flex().size(16).flex_none().items_center().justify_center().child(pic))
+      .child(div().flex_1().min_w(0).truncate().child(text));
   }
 
   iconView(t, p) {
@@ -458,7 +573,9 @@ class Popup {
   projectView(t, p) {
     const name = p.project;
     return v_flex().id("project-menu").track_focus(this.handle).on_key_down(esc).size_full().p(5).bg(t.popover).text_size(12.8)
-      .child(this.item(t, "pm-icon", svg(chrome("square-pen")).size(14).flex_none().text_color(t.muted), "Change icon…",
+      .child(this.item(t, "pm-rename", svg(chrome("square-pen")).size(14).flex_none().text_color(t.muted), "Rename…",
+        () => { closeOverlay(p.overlay); openRename(name); }))
+      .child(this.item(t, "pm-icon", tile(iconOf(name), 16), "Change icon…",
         () => { closeOverlay(p.overlay); openIcon(name); }))
       .child(div().mx(7).my(4).h(1).flex_none().bg(t.border))
       .child(this.item(t, "pm-delete", svg(icon("trash")).size(14).flex_none().text_color(t.blocked), "Delete project…",
@@ -475,21 +592,23 @@ class Popup {
       .child(this.item(t, "bm-unfold", svg(chrome("chevron-down")).size(14).flex_none().text_color(t.muted), "Unfold all", then(() => run(`${MOD}.unfold-all`))));
   }
 
-  newView(t, p) {
+  // The name dialog: a new project, or a new name for one.
+  nameView(t, p) {
+    const renaming = p.role === "rename";
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
       .hover((s) => s.opacity(0.88)).on_click(action).child(text);
-    const hint = p.dir ? `Moves ${where(p.dir)} into it.` : "Then right-click a pill to move its directory here.";
+    const hint = renaming ? "Its directories and icon stay." : p.dir ? `Moves ${where(p.dir)} into it.` : "Then drag pills onto it, or right-click one.";
     return v_flex().id("new-project").track_focus(this.handle).on_key_down(esc).w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
-      .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().child("New project"))
+      .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().child(renaming ? "Rename project" : "New project"))
         .child(div().text_size(11).text_color(t.dim).child("Esc")))
       .child(div().pt(16).pb(7).text_size(11.5).text_color(t.dim).child("Name"))
       .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(ringColor(t)).bg(t.background).text_size(12.8).text_color(t.foreground))
       .child(div().pt(6).text_size(11.5).text_color(this.error ? t.blocked : t.dim).child(this.error ?? hint))
       .child(h_flex().pt(18).gap(8).justify_end()
         .child(button("np-cancel", "Cancel", false, () => closeOverlay(p.overlay)))
-        .child(button("np-create", "Create", true, (_e, cx) => this.create(cx))));
+        .child(button("np-create", renaming ? "Rename" : "Create", true, (_e, cx) => this.submit(cx))));
   }
 
   render() {
@@ -498,6 +617,6 @@ class Popup {
     if (p.role === "dir") return this.dirView(t, p);
     if (p.role === "project") return this.projectView(t, p);
     if (p.role === "blank") return this.blankView(t, p);
-    return this.newView(t, p);
+    return this.nameView(t, p);
   }
 }

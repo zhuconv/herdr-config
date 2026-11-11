@@ -131,6 +131,22 @@ export function deleteProject(state, name) {
   return { projects, loose: tidy(state.loose ?? [], projects) };
 }
 
+// A project renamed; its directories stay. An empty or taken name changes nothing.
+export function renameProject(state, from, to) {
+  const has = (n) => state.projects.some((p) => p.name === n);
+  if (!to || to === from || !has(from) || has(to)) return state;
+  return { ...state, projects: state.projects.map((p) => (p.name === from ? { ...p, name: to } : p)) };
+}
+
+// A name renamed in what's kept by name: a list (the dragged order) or a {name: value}
+// store (the icons). A stale entry under the new name, left by a deleted project, gives way.
+export function renameIn(kept, from, to) {
+  if (Array.isArray(kept)) return kept.filter((n) => n !== to).map((n) => (n === from ? to : n));
+  if (!kept || !(from in kept)) return kept;
+  const { [from]: value, [to]: _stale, ...rest } = kept;
+  return { ...rest, [to]: value };
+}
+
 // The projects in the order the person dragged them into; the rest after them, by name.
 export function ordered(names, order) {
   const at = new Map((order ?? []).map((n, i) => [n, i]));
