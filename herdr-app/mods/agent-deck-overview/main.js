@@ -269,8 +269,9 @@ export default class Overview extends View {
 
   // agent-deck: a terminal's own labels (`hc label t7 role=reviewer`) as `key value` chips.
   chips(t, id, list) {
+    // local: a chip narrows to fit a narrow card (its value truncates) instead of sticking out.
     return h_flex().id(`ov-chips-${id}`).flex_wrap().gap(4).min_w(0)
-      .children(list.map(([k, v]) => h_flex().id(`ov-chip-${id}-${k}`).flex_none().max_w(200).gap(4).px(5).py(1).rounded(4).bg(t.chrome).border(1).border_color(t.border).text_size(10.5)
+      .children(list.map(([k, v]) => h_flex().id(`ov-chip-${id}-${k}`).flex_shrink_1().min_w(0).max_w(200).gap(4).px(5).py(1).rounded(4).bg(t.chrome).border(1).border_color(t.border).text_size(10.5)
         .tooltip(`${k}=${v}`)
         .child(div().flex_none().text_color(t.dim).child(k))
         .child(div().min_w(0).truncate().text_color(t.foreground).child(v))));
@@ -282,8 +283,11 @@ export default class Overview extends View {
     const color = stateColor(t, a.status);
     return v_flex()
       .id(`ov-${a.address}`)
+      // local: 240 to start, so a wide lane fits two to a line, yet never wider than its lane:
+      // with min_w(240) a card in a narrow lane stuck out of it and lost its right edge.
       .flex_1()
-      .min_w(240)
+      .flex_basis(240)
+      .min_w(0)
       .px(10)
       .py(8)
       .gap(5)
@@ -325,8 +329,10 @@ export default class Overview extends View {
     const own = customLabels(x.labels);
     return v_flex()
       .id(`ov-t-${x.address}`)
+      // local: as in card(), 260 to start but never wider than the lane (six machines leave ~217).
       .flex_1()
-      .min_w(260)
+      .flex_basis(260)
+      .min_w(0)
       .px(10)
       .py(8)
       .gap(5)
