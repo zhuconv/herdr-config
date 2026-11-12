@@ -2,11 +2,12 @@
 // machine; a conversation (an agent) belongs to the project holding the directory it runs
 // in or its nearest parent, else it waits in Unsorted. A group shows a pill per directory,
 // folded until clicked; an open pill's path has a + that starts Claude in that directory.
-// Drag a pill among its group's pills to reorder them, or onto another group to move its
-// directory there; right-click it to move it (into a project, a new one, or back to
-// Unsorted). Right-click a project to rename it, change its icon or delete it (its
-// directories go back to Unsorted); drag a project's row to reorder the projects. Shells
-// aren't listed: the tab bar and ⌃1–⌃9 reach them.
+// Click a project's row to show its tabs in the tab bar (mods/my-tabs, grouped by these
+// directories, each with its pill's color dot); its chevron folds it. Drag a pill among its
+// group's pills to reorder them, or onto another group to move its directory there;
+// right-click it to move it (into a project, a new one, or back to Unsorted). Right-click a
+// project to rename it, change its icon or delete it (its directories go back to Unsorted);
+// drag a project's row to reorder the projects. Shells aren't listed here; the tab bar has them.
 //
 // Kept in shared state: "my-projects.state" ({ projects: [{ name, dirs }], loose }; see
 // model.js), "my-projects.icons" (each project's icon), "my-projects.order" (the projects'
@@ -17,13 +18,23 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
 const ICONS = `${MOD}.icons`;
 const ORDER = `${MOD}.order`;
 const PILLS = `${MOD}.pills`;
+// With the tab bar (mods/my-tabs), which shows one project's tabs: the project picked here
+// ({ project, at }; null: Unsorted), each project's last-used pane (the bar keeps it), each
+// directory's color (pill dots, tab groups), the project the bar shows ({ project }), the
+// bar's dragged tab order.
+const PICK = `${MOD}.pick`;
+const LAST = `${MOD}.last`;
+const DIRCOLORS = `${MOD}.groupcolors`;
+const OLD_DIRCOLORS = `${MOD}.dircolors`; // colors by an earlier rule (2026-11-11), dropped
+const SHOWN = "my-tabs.project";
+const TAB_ORDER = "my-tabs.order";
 // Until 2026-11-11 projects were folder names and this listed the ones made with +.
 // Read only to start STATE: those come along, empty; everything else starts Unsorted.
 const KEPT = `${MOD}.list`;
@@ -144,6 +155,16 @@ function newSession(pill) {
   const argv = known.find((a) => a.key === "claude")?.run ?? ["claude"];
   if (space) run("tab.new", { space, folder: path, argv });
   else run("space.new", { machine: machine ?? "", folder: path, argv });
+}
+
+// Picking a project (null: Unsorted) shows its tabs in the tab bar: its last-used pane gets
+// focus, else its first tab's; with no tabs, the bar shows it empty until focus moves.
+function pickProject(name) {
+  const tabs = tabsOf(spaces(), panes(), agents());
+  const groups = tabGroups(tabs, state(), name, { home: home(), pills: shared(PILLS) ?? [], order: shared(TAB_ORDER) ?? [] });
+  const pane = landing(groups, (shared(LAST) ?? {})[name ?? UNSORTED]);
+  setShared(PICK, { project: name, at: Date.now() });
+  if (pane) run("pane.focus", { pane });
 }
 
 const popup = (p, width, height) => openOverlay({ mod: MOD, kind: "popup", width, height, props: p });
@@ -347,18 +368,25 @@ export default class Projects extends View {
         // Pressing the icon starts no drag.
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => { cx.stop_propagation(); h.iconClick(); }));
-    return h_flex().id(`head-${h.id}`).h(30).flex_none().pl(5).pr(8).gap(6).items_center().rounded(8)
+    // Only the chevron folds.
+    const fold = div().id(`fold-${h.id}`).size(20).flex_none().rounded(5).flex().items_center().justify_center()
+      .cursor_pointer().hover((s) => s.bg(t.selected)).tooltip(h.closed ? "Unfold" : "Fold")
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => { cx.stop_propagation(); h.toggle(); this.save(); cx.notify(); })
+      .child(svg(chrome(h.closed ? "chevron-right" : "chevron-down")).size(11).text_color(t.dim));
+    return h_flex().id(`head-${h.id}`).h(30).flex_none().pl(5).pr(4).gap(6).items_center().rounded(8)
+      .when(h.current, (el) => el.bg(t.hover))
       .cursor_pointer().hover((s) => s.bg(t.hover))
       .when(Boolean(h.drag), (el) => el.on_mouse_down("left", (e) => this.press({ kind: "project", name: h.drag }, e)))
-      // A release that ends a drag isn't a click.
-      .on_click((_e, cx) => { if (this.drag?.moved) return; h.toggle(); this.save(); cx.notify(); })
+      // A click shows the project's tabs in the tab bar. A release that ends a drag isn't a click.
+      .on_click((_e, cx) => { if (this.drag?.moved) return; h.pick(); cx.notify(); })
       // A row with its own menu keeps the right-click from the list's blank-area menu.
       .when(Boolean(h.menu), (el) => el.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); h.menu(); }))
       .child(logo)
       .child(div().flex_1().min_w(0).truncate().font_medium().text_color(h.dim ? t.muted : t.foreground).child(h.name))
       .when(h.closed && Boolean(h.status), (el) => el.child(mark(t, h.status)))
       .child(div().w(16).flex_none().text_center().text_size(11).text_color(t.dim).child(String(h.count)))
-      .child(svg(chrome(h.closed ? "chevron-right" : "chevron-down")).size(11).flex_none().text_color(t.dim));
+      .child(fold);
   }
 
   // A directory's pill. Pressed and dragged, a copy goes with the pointer (ghost()); let go
@@ -370,7 +398,7 @@ export default class Projects extends View {
       .when(o.lifted, (el) => el.opacity(0.35))
       .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(o.tooltip)
       .on_mouse_down("left", (e) => this.press({ kind: "dir", key: o.key, from: o.group, grab: e.local_position ?? { x: 12, y: 11 },
-        look: { machine: o.machine, label: o.label, detail: o.detail, count: o.count } }, e))
+        look: { machine: o.machine, label: o.label, detail: o.detail, count: o.count, color: o.color } }, e))
       .on_mouse_move((e) => {
         if (this.drag?.kind === "dir") this.hitPill = { key: o.key, after: e.local_position.x > (e.bounds?.width ?? 0) / 2, box: e.bounds };
       })
@@ -382,6 +410,8 @@ export default class Projects extends View {
   // What a pill shows: machine, directory name, (folded: its loudest state), count.
   pillParts(t, o) {
     return [
+      // The directory's color, the one its group of tabs has in the tab bar.
+      ...(o.color ? [div().size(7).flex_none().rounded(4).bg(o.color)] : []),
       svg(chrome(o.machine ? "server" : "monitor")).size(11).flex_none().text_color(t.muted),
       div().flex_none().text_size(11.5).text_color(o.dim ? t.muted : t.foreground).child(o.label),
       div().min_w(0).max_w(104).truncate().text_size(11.5).text_color(t.muted).child(o.detail),
@@ -448,6 +478,8 @@ export default class Projects extends View {
       tile: p.icon ? tile(p.icon) : plainTile(t, icon("inbox")),
       status: loud(urgent(p.convs.map((c) => c.status))),
       toggle: () => (closed ? this.closed.delete(p.key) : this.closed.add(p.key)),
+      pick: () => pickProject(p.icon ? p.name : null),
+      current: this.shownProject !== undefined && this.shownProject === (p.icon ? p.name : null),
       iconClick: p.icon ? () => openIcon(p.name) : null,
       menu: p.icon ? () => openProject(p.name) : null,
       drag: p.icon ? p.name : null, // Unsorted: always last, not dragged
@@ -474,6 +506,7 @@ export default class Projects extends View {
       h_flex().flex_none().flex_wrap().gap(5).pl(35).pb(6).children(p.pills.map((pl) => this.pill(t, `pill-${hash(p.key + "\u0000" + pl.key)}`, ring, {
         key: pl.key, group: p.key, lifted: d?.kind === "dir" && d.moved && d.key === pl.key && d.from === p.key,
         machine: pl.machine, label: pl.label, detail: pl.detail, count: String(pl.convs.length), dim: !pl.convs.length,
+        color: (shared(DIRCOLORS) ?? {})[pl.key] ?? null,
         open: pl === shown, here: pl.convs.some((c) => c.focused),
         status: pl === shown ? null : loud(urgent(pl.convs.map((c) => c.status))),
         tooltip: `${pl.machine ?? "This computer"}: ${shortPath(pl.path, homeOf(pl.machine))}. Drag to reorder, or onto another project; right-click to move it.`,
@@ -512,6 +545,17 @@ export default class Projects extends View {
     // A project seen for the first time gets its icon once; a write re-renders every mod.
     const icons = withIcons(shared(ICONS), projects.map((p) => p.name));
     if (icons) setShared(ICONS, icons);
+    // Each directory's color (its pill's dot, its group in the tab bar), given once. The tab bar
+    // gives one to directories with no pill; colors already given in a project count as used.
+    const stored = shared(DIRCOLORS) ?? {}, st = state();
+    const owned = (name) => Object.keys(stored).filter((k) => ownerOf(k, st.projects, st.loose) === name);
+    const plan = (p, name, icon) => ({ keys: [...new Set([...p.pills.map((pl) => pl.key), ...owned(name)])], icon });
+    const colors = withDirColors(stored, [...projects.map((p) => plan(p, p.name, iconOf(p.name).color)), ...(unsorted ? [plan(unsorted, null, null)] : [])]);
+    if (colors) setShared(DIRCOLORS, colors);
+    if (shared(OLD_DIRCOLORS) != null) setShared(OLD_DIRCOLORS, null);
+    // The project the tab bar shows (undefined until it says).
+    const sp = shared(SHOWN);
+    this.shownProject = sp && typeof sp === "object" && "project" in sp ? sp.project : undefined;
     this.names = projects.map((p) => p.name);
     this.shown = Object.fromEntries([...projects.map((p) => [p.name, p.pills.map((pl) => pl.key)]),
       ...(unsorted ? [[UNSORTED, unsorted.pills.map((pl) => pl.key)]] : [])]);

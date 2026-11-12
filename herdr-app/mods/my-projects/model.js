@@ -216,6 +216,101 @@ export function group(convs, state, { home, order = [], pills: pillOrder = [] } 
   };
 }
 
+// The tab bar (mods/my-tabs, which keeps a copy of this file) shows one project's tabs,
+// grouped by directory as the pills group conversations.
+
+// Every tab, with its machine, its directory (its first terminal's folder, else its space's)
+// and its panes, each named as the left panel names a conversation.
+export function tabsOf(spaces, panes, agents) {
+  const reported = new Map((agents ?? []).map((a) => [a.pane, a]));
+  return (spaces ?? []).flatMap((s) => (s.tabs ?? []).map((tab) => {
+    const mine = (panes ?? []).filter((p) => p.tab === tab.id);
+    const first = mine.find((p) => p.terminal && p.cwd);
+    const machine = s.machine ?? null;
+    return {
+      id: tab.id, space: s.id, spaceIndex: s.index ?? 0, index: tab.index ?? 0, machine, tab,
+      key: dirKey(machine, first?.cwd || s.folder || ""),
+      panes: mine.map((p) => {
+        const a = reported.get(p.pane), program = a?.program ?? p.program;
+        return {
+          pane: p.pane, terminal: p.terminal, status: a?.status ?? p.status ?? null, program,
+          // A tab of its own goes by the tab's name when it has one; a pane of a split, by itself.
+          name: nameOf({ address: p.terminal ?? "", title: a?.title ?? p.title, program }, mine.length === 1 ? tab : null),
+        };
+      }),
+    };
+  }));
+}
+
+export const tabProject = (t, state) => ownerOf(t.key, state.projects, state.loose ?? []);
+
+// One project's tabs (null: Unsorted), by directory: the groups in the left panel's pill
+// order, each group's tabs in their dragged order, the rest by space, then position.
+export function tabGroups(tabs, state, project, { home, pills = [], order = [] } = {}) {
+  const at = new Map(order.map((id, i) => [id, i]));
+  const pos = (t) => (at.has(t.id) ? at.get(t.id) : Infinity);
+  const byKey = new Map();
+  for (const t of tabs) {
+    if (tabProject(t, state) !== project) continue;
+    if (!byKey.has(t.key)) byKey.set(t.key, []);
+    byKey.get(t.key).push(t);
+  }
+  return orderPills([...byKey.entries()].map(([key, list]) => {
+    const { machine, path } = splitDir(key);
+    return {
+      key, machine, path, label: machine ?? "local", detail: isHome(path, machine ? null : home) ? "~" : baseName(path),
+      tabs: list.sort((a, b) => pos(a) - pos(b) || a.spaceIndex - b.spaceIndex || a.index - b.index),
+    };
+  }), pills);
+}
+
+// Where picking a project goes: its last-used pane if it's still one of its tabs', else the
+// first pane of its first tab. null: it has no tabs.
+export function landing(groups, last) {
+  const tabs = groups.flatMap((g) => g.tabs);
+  if (last && tabs.some((t) => t.panes.some((p) => p.pane === last))) return last;
+  return tabs[0]?.panes[0]?.pane ?? null;
+}
+
+// What a tab (or one pane of a split) dropped on another tab does: "merge" (its terminals join
+// that tab as a split), "before" / "after" it (reordering, within a group), "deny" (another
+// machine: a tab holds one machine's terminals). x: where the pointer is across the target, 0–1.
+export function dropZone(src, dst, x, sameGroup) {
+  if (!src || !dst || src.id === dst.id) return null;
+  if ((src.machine ?? null) !== (dst.machine ?? null)) return "deny";
+  if (sameGroup && x < 0.25) return "before";
+  if (sameGroup && x > 0.75) return "after";
+  return "merge";
+}
+
+// The order directories take the six colors in: blue, orange, green, pink, purple, teal. The
+// first four are the easiest to tell apart; blue/purple and teal/green only meet in a project
+// with five or more directories.
+export const DIR_COLORS = ["#5b8def", "#e3814f", "#3fae6a", "#d9649a", "#8b7cf6", "#22a99a"];
+
+// A color for each directory, given when it first joins a project and kept after (reordering
+// never recolors): the first of DIR_COLORS that the project's icon and its other directories
+// don't use. A kept color that clashes (a directory moved in from another project) gives way,
+// for the later directory in `keys`. projects: [{ keys, icon }] (icon: the project's color, or
+// null). Null when nothing changed.
+export function withDirColors(store, projects) {
+  const next = { ...(store ?? {}) };
+  let changed = false;
+  for (const { keys, icon } of projects) {
+    const used = new Set(icon ? [icon] : []), fresh = [];
+    for (const k of keys) {
+      if (next[k] && !used.has(next[k])) used.add(next[k]);
+      else fresh.push(k);
+    }
+    for (const k of fresh) {
+      const c = DIR_COLORS.find((x) => !used.has(x)) ?? DIR_COLORS[fnv(k) % DIR_COLORS.length];
+      if (next[k] !== c) { next[k] = c; changed = true; }
+      used.add(c);
+    }
+  }
+  return changed ? next : null;
+}
+
 export const RANK = { blocked: 4, done: 3, working: 2, idle: 1 };
 // The most urgent status, as Herdr ranks them.
 export function urgent(statuses) {
