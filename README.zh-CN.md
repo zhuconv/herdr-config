@@ -8,7 +8,7 @@
 
 ![装好这套配置的 Herdr：左边是 Projects 面板，顶部是当前 project 按目录分组的 tab，左下是 Agents 列表](docs/herdr-demo.png)
 
-**不用安装也能试：**[这套配置的可点击模型](https://claude.ai/artifact/8uu5XZMFMHJhTURieoGZEe)。在画板上点 **Play**，旁边的便签（中英各一份）写了可以试哪些操作。
+**在浏览器里试：**[zhuconv.github.io/herdr-config](https://zhuconv.github.io/herdr-config/) 是这套配置的可点击模型，用的是示例名字。把 tab 拖到一起、点 project 的 **+**、到处右键试试；角落里的卡片写了可以试哪些操作。
 
 ## 能做什么
 
@@ -86,9 +86,10 @@ git pull && ./install.sh
 | `claude/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态。`install.sh` 会把它加进 `~/.claude/settings.json` |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常是"查找下一个" |
 | `install.sh`、`save.sh`、`paths.sh` | 安装、存回仓库，以及同步哪些文件的清单 |
+| `docs/` | 可点击模型（GitHub Pages 发布）和截图。`make-demo.py` 用设计画布的文件生成 `index.html`，换成示例名字；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |
 
 不同步的：Herdr 自己写的状态（`shared.json`、`view.json`、`data/` 等）和 hc 的机器配置（新电脑上用 `hc machine add` 加）。
 
 ## 致谢
 
-project 图标来自 [Lucide](https://lucide.dev)（ISC 许可，见 `herdr-app/mods/my-projects/icons/LICENSE-lucide.txt`）。Overview 面板是 zztalker 的 [herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck)。
+project 图标来自 [Lucide](https://lucide.dev)（ISC 许可，见 `herdr-app/mods/my-projects/icons/LICENSE-lucide.txt`）。Overview 面板是 zztalker 的 [herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck)。模型页用了 [Preact](https://preactjs.com)（MIT，见 `docs/LICENSE-preact.txt`）。

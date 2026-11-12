@@ -8,7 +8,7 @@ Projects span machines and folders. The tab bar shows one project at a time, gro
 
 ![Herdr with this setup: the Projects panel on the left, the current project's tabs grouped by directory along the top, the Agents list at the bottom left](docs/herdr-demo.png)
 
-**Try it without installing:** [a clickable mock of this setup](https://claude.ai/artifact/8uu5XZMFMHJhTURieoGZEe). Press **Play** on the board. The notes beside it (English and Chinese) list what to try.
+**Try it in your browser:** [zhuconv.github.io/herdr-config](https://zhuconv.github.io/herdr-config/) is a clickable mock of this setup, with sample names. Drag tabs onto each other, click a project's **+**, right-click things; a card in the corner lists what to try.
 
 ## What it does
 
@@ -86,9 +86,10 @@ git pull && ./install.sh
 | `claude/agent-note` | The Claude Code hook. It keeps the start of your last prompt and the end of the reply for the ⌃Tab cards, and sets `note.state` (working or idle) for background sessions, which report no state to Herdr. `install.sh` adds it to `~/.claude/settings.json` |
 | `raycast/` | The Raycast script for ⌘G in any app. `postkey.c` keeps ⌘G as Find Next in VS Code |
 | `install.sh`, `save.sh`, `paths.sh` | Install, save back, and the list of what's synced |
+| `docs/` | The clickable mock (served by GitHub Pages) and the screenshot. `make-demo.py` builds `index.html` from the design canvas's file, with sample names; `support.js` plays it with [Preact](https://preactjs.com) |
 
 Not synced: the state Herdr writes itself (`shared.json`, `view.json`, `data/`, …) and hc's machines (add them on a new Mac with `hc machine add`).
 
 ## Credits
 
-Project icons are from [Lucide](https://lucide.dev) (ISC license, see `herdr-app/mods/my-projects/icons/LICENSE-lucide.txt`). The Overview panel is [herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) by zztalker.
+Project icons are from [Lucide](https://lucide.dev) (ISC license, see `herdr-app/mods/my-projects/icons/LICENSE-lucide.txt`). The Overview panel is [herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) by zztalker. The mock runs on [Preact](https://preactjs.com) (MIT, see `docs/LICENSE-preact.txt`).
