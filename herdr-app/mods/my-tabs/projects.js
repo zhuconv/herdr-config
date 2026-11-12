@@ -220,25 +220,42 @@ export function group(convs, state, { home, order = [], pills: pillOrder = [] } 
 // The tab bar (mods/my-tabs, which keeps a copy of this file) shows one project's tabs,
 // grouped by directory as the pills group conversations.
 
-// Every tab, with its machine, its directory (its first terminal's folder, else its space's)
-// and its panes, each named as the left panel names a conversation.
-export function tabsOf(spaces, panes, agents) {
+// The agent programs: Herdr's own list (menu: the + menu keeps the last one it got, in shared
+// "new-menu.agents"), and these.
+export const agentKeys = (menu) => new Set(["claude", "codex", "gemini", "opencode", "pi",
+  ...Object.values(menu ?? {}).flat().filter((p) => p?.agent && p.key).map((p) => p.key)]);
+
+// A pane running an agent, including one that reports no status, such as `claude attach` to a
+// background session (Herdr's agents() leaves those out). Not by p.app: it outlives the agent.
+// reported: agents() by pane.
+export const runsAgent = (p, reported, keys) =>
+  Boolean(p.terminal && (reported.has(p.pane) || p.program?.agent || keys.has(p.program?.key)));
+
+// Every tab, with its machine, its directory (its first agent's folder, else its first
+// terminal's, else its space's), its panes and the ones it lists, each named as the left panel
+// names a conversation.
+export function tabsOf(spaces, panes, agents, keys = agentKeys()) {
   const reported = new Map((agents ?? []).map((a) => [a.pane, a]));
   return (spaces ?? []).flatMap((s) => (s.tabs ?? []).map((tab) => {
-    const mine = (panes ?? []).filter((p) => p.tab === tab.id);
-    const first = mine.find((p) => p.terminal && p.cwd);
+    const mine = (panes ?? []).filter((p) => p.tab === tab.id).map((p) => {
+      const a = reported.get(p.pane), program = a?.program ?? p.program;
+      return { pane: p.pane, terminal: p.terminal, cwd: p.cwd ?? null, title: a?.title ?? p.title,
+        status: a?.status ?? p.status ?? null, program, agent: runsAgent(p, reported, keys) };
+    });
+    // A tab is its agents. The terminals beside them (a shell, a quick command) come and go, so
+    // they aren't listed and don't say its directory; a tab with no agent shows its first pane.
+    const listed = mine.some((p) => p.agent) ? mine.filter((p) => p.agent) : mine.slice(0, 1);
+    for (const p of mine) {
+      // A tab that lists one pane goes by the tab's name when it has one; the others, by themselves.
+      p.name = nameOf({ address: p.terminal ?? "", title: p.title, program: p.program }, listed.length === 1 && listed[0] === p ? tab : null);
+    }
+    const first = [...listed, ...mine].find((p) => p.terminal && p.cwd);
     const machine = s.machine ?? null;
     return {
       id: tab.id, space: s.id, spaceIndex: s.index ?? 0, index: tab.index ?? 0, machine, tab,
       key: dirKey(machine, first?.cwd || s.folder || ""),
-      panes: mine.map((p) => {
-        const a = reported.get(p.pane), program = a?.program ?? p.program;
-        return {
-          pane: p.pane, terminal: p.terminal, status: a?.status ?? p.status ?? null, program,
-          // A tab of its own goes by the tab's name when it has one; a pane of a split, by itself.
-          name: nameOf({ address: p.terminal ?? "", title: a?.title ?? p.title, program }, mine.length === 1 ? tab : null),
-        };
-      }),
+      panes: mine, // every pane, to move with the tab
+      listed,
     };
   }));
 }
@@ -270,7 +287,14 @@ export function tabGroups(tabs, state, project, { home, pills = [], order = [] }
 export function landing(groups, last) {
   const tabs = groups.flatMap((g) => g.tabs);
   if (last && tabs.some((t) => t.panes.some((p) => p.pane === last))) return last;
-  return tabs[0]?.panes[0]?.pane ?? null;
+  return tabs[0]?.listed[0]?.pane ?? null;
+}
+
+// ⌘1–⌘8 pick that tab of the bar and ⌘9 the last, as in a browser. Folding a group doesn't
+// renumber the tabs after it: its own still count.
+export function nthTab(groups, n) {
+  const all = groups.flatMap((g) => g.tabs);
+  return (n >= 9 ? all[all.length - 1] : all[n - 1]) ?? null;
 }
 
 // What a tab (or one pane of a split) dropped on another tab does: "merge" (its terminals join

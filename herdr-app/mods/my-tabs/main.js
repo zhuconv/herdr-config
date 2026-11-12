@@ -5,7 +5,7 @@ import { spaces, panes, run, openOverlay, theme, window, shared, layout, setting
 import { Reopener } from "./reopen.js";
 import { Waiting } from "./waiting.js";
 import { Recent } from "./recent.js";
-import { tabsOf, tabProject, tabGroups, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
+import { tabsOf, agentKeys, tabProject, tabGroups, nthTab, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
@@ -32,6 +32,8 @@ const projectState = () => {
 const hash = (s) => [...String(s)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 2166136261).toString(36);
 // A color at some opacity ("80" = 50%), when it's a plain #rrggbb; else the fallback.
 const faint = (c, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(c ?? "") ? c + alpha : fallback);
+// Every tab, with the agents it lists (projects.js tabsOf), told apart as the left panel does.
+const allTabs = () => tabsOf(spaces(), panes(), agents(), agentKeys(shared("new-menu.agents")));
 const select = (tab) => { run("space.select", { id: tab.space }); run("tab.select", { id: tab.id }); };
 
 function find(node, id) {
@@ -75,6 +77,7 @@ export default class Tabs extends View {
           else if (c === "waiting" || c === "waiting away") this.goWaiting(c === "waiting away");
           else if (c === "switch" || c === "switch-back") this.switchAgent(c === "switch" ? 1 : -1);
           else if (c === "switch-preview") this.switchAgent(1, true);
+          else if (/^tab-[1-9]$/.test(c)) this.goTab(Number(c.slice(4)), cx);
         } catch (err) {
           console.log("my-tabs", c, String(err?.stack ?? err));
         }
@@ -105,7 +108,7 @@ export default class Tabs extends View {
     if (pane === this.focusPane) return false;
     this.focusPane = pane;
     this.focusAt = Date.now();
-    const tab = pane ? tabsOf(spaces(), panes(), agents()).find((t) => t.id === f.tab) : null;
+    const tab = pane ? allTabs().find((t) => t.id === f.tab) : null;
     if (tab) {
       const key = tabProject(tab, projectState()) ?? UNSORTED, last = shared(LAST) ?? {};
       if (last[key] !== pane) setShared(LAST, { ...last, [key]: pane });
@@ -119,6 +122,26 @@ export default class Tabs extends View {
     const pick = shared(PICK), tab = tabs.find((t) => t.id === focused()?.tab);
     if (pick && pick.at > this.focusAt) return pick.project ?? null;
     return tab ? tabProject(tab, st) : pick?.project ?? null;
+  }
+
+  // The shown project's tabs, by directory.
+  bar() {
+    const st = projectState(), tabs = allTabs();
+    const project = this.shownProject(tabs, st);
+    const groups = tabGroups(tabs, st, project, { home: home(), pills: shared(PILLS) ?? [], order: shared(ORDER) ?? [] });
+    return { st, project, groups };
+  }
+
+  // ⌘1–⌘9 ("tab-1"…"tab-9" in keys.json): the bar's tabs (nthTab). Herdr's own tab.select
+  // counts the space's tabs, and a space holds other projects' tabs too. A folded group opens
+  // to show the tab picked in it.
+  goTab(n, cx) {
+    this.track();
+    const groups = this.bar().groups, tab = nthTab(groups, n);
+    if (!tab) return;
+    const g = groups.find((x) => x.tabs.includes(tab));
+    if (g && this.folded.delete(g.key)) { this.saveFolds(); cx.notify(); }
+    select(tab);
   }
 
   saveFolds() {
@@ -256,9 +279,9 @@ export default class Tabs extends View {
   // it): that tab gets shown and focused, then each terminal is parked (its pane goes, it keeps
   // running) and given a pane there. The tab they left goes with its last pane.
   async merge(cx, d, dst) {
-    const src = tabsOf(spaces(), panes(), agents()).find((t) => t.id === d.id);
+    const src = allTabs().find((t) => t.id === d.id);
     const moving = d.kind === "pane" ? [d.terminal] : (src?.panes ?? []).map((p) => p.terminal).filter(Boolean);
-    const anchor = dst.panes.find((p) => p.terminal)?.pane;
+    const anchor = [...dst.listed, ...dst.panes].find((p) => p.terminal)?.pane;
     if (!moving.length || !anchor) return;
     select(dst);
     run("pane.focus", { pane: anchor });
@@ -274,7 +297,7 @@ export default class Tabs extends View {
 
   // One pane of a split becomes a tab of its own, in the same space.
   async unsplit(cx, d) {
-    const src = tabsOf(spaces(), panes(), agents()).find((t) => t.id === d.id);
+    const src = allTabs().find((t) => t.id === d.id);
     if (d.kind !== "pane" || !d.terminal || !src) return;
     run("space.select", { id: src.space });
     run("terminal.park", { terminal: d.terminal });
@@ -304,10 +327,11 @@ export default class Tabs extends View {
     return null;
   }
 
-  // One pane of a tab: its program, name and state. In a split, pressing one drags that pane.
+  // One pane a tab lists (its agents: terminals beside them aren't): its program, name and
+  // state. When it lists more than one, pressing one drags that pane.
   segment(t, tab, p, i) {
     const icon = this.programIcon(t, p.program), m = this.mark(t, p.status);
-    const many = tab.panes.length > 1;
+    const many = tab.listed.length > 1;
     return h_flex().id(`seg-${hash(p.pane)}`).gap(7).items_center().min_w(0)
       .when(many && Boolean(p.terminal), (el) => el.on_mouse_down("left", () => { this.pressPane = { pane: p.pane, terminal: p.terminal, name: p.name, program: p.program }; }))
       .when(i > 0, (el) => el.child(div().w(1).h(14).mr(2).flex_none().bg(t.border)))
@@ -337,13 +361,13 @@ export default class Tabs extends View {
         const p = this.pressPane;
         this.pressPane = null;
         if (e.click_count === 2) { run("tab.rename", { id: tab.id }); return; }
-        this.press(p ? { kind: "pane", id: tab.id, ...p } : { kind: "tab", id: tab.id, name: tab.panes[0]?.name, program: tab.panes[0]?.program, count: tab.panes.length }, e);
+        this.press(p ? { kind: "pane", id: tab.id, ...p } : { kind: "tab", id: tab.id, name: tab.listed[0]?.name, program: tab.listed[0]?.program, count: tab.listed.length }, e);
       })
       .on_mouse_move((e) => { if (this.drag) this.hit = { id: tab.id, x: e.local_position.x / (e.bounds?.width || 1) }; })
       // A release that ends a drag isn't a click.
       .on_click(() => { if (!this.drag?.moved) select(tab); })
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: tab.id, space: tab.space } } }); })
-      .children(tab.panes.map((p, i) => this.segment(t, tab, p, i)))
+      .children(tab.listed.map((p, i) => this.segment(t, tab, p, i)))
       .child(div().id(`close-${tab.id}`).size(14).flex_none().flex().items_center().justify_center().rounded(4).text_color(t.dim)
         .opacity(on || this.hoverTab === tab.id ? 1 : 0).hover((s) => s.text_color(t.foreground))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
@@ -390,12 +414,9 @@ export default class Tabs extends View {
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
-    // The shown project's tabs, by directory.
     this.track();
-    const st = projectState(), tabs = tabsOf(spaces(), panes(), agents());
-    const project = this.shownProject(tabs, st);
+    const { st, project, groups } = this.bar();
     if (this.published !== project) { this.published = project; setShared(SHOWN, { project }); }
-    const groups = tabGroups(tabs, st, project, { home: home(), pills: shared(PILLS) ?? [], order: shared(ORDER) ?? [] });
     // Each directory's color (the left panel gives most; this one, to directories with no pill):
     // colors already given to the project's directories, and its icon's, count as used.
     const stored = shared(DIRCOLORS) ?? {};

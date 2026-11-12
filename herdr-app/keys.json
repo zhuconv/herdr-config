@@ -69,7 +69,16 @@
     "cmd-shift-t": "my-tabs.reopen",
     "cmd-g": "my-tabs.waiting",
     "ctrl-tab": "my-tabs.switch",
-    "ctrl-shift-tab": "my-tabs.switch-back"
+    "ctrl-shift-tab": "my-tabs.switch-back",
+    "cmd-1": "my-tabs.tab-1",
+    "cmd-2": "my-tabs.tab-2",
+    "cmd-3": "my-tabs.tab-3",
+    "cmd-4": "my-tabs.tab-4",
+    "cmd-5": "my-tabs.tab-5",
+    "cmd-6": "my-tabs.tab-6",
+    "cmd-7": "my-tabs.tab-7",
+    "cmd-8": "my-tabs.tab-8",
+    "cmd-9": "my-tabs.tab-9"
   },
   "terminal": {
     "cmd-f": "terminal.search",

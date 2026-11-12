@@ -7,7 +7,8 @@
 // group's pills to reorder them, or onto another group to move its directory there;
 // right-click it to move it (into a project, a new one, or back to Unsorted). Right-click a
 // project to rename it, change its icon or delete it (its directories go back to Unsorted);
-// drag a project's row to reorder the projects. Shells aren't listed here; the tab bar has them.
+// drag a project's row to reorder the projects. Shells aren't listed here; a tab with no agent
+// shows on the tab bar.
 //
 // Kept in shared state: "my-projects.state" ({ projects: [{ name, dirs }], loose }; see
 // model.js), "my-projects.icons" (each project's icon), "my-projects.order" (the projects'
@@ -18,7 +19,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -100,19 +101,17 @@ function state() {
 }
 const save = (s) => setShared(STATE, s);
 
-// The agent programs: Herdr's own list (the + menu keeps the last one it got), and these.
-const agentKeys = () => new Set(["claude", "codex", "gemini", "opencode", "pi",
-  ...Object.values(shared("new-menu.agents") ?? {}).flat().filter((p) => p?.agent && p.key).map((p) => p.key)]);
+// The agent programs (model.js agentKeys), with Herdr's list as the + menu last got it.
+const keysNow = () => agentKeys(shared("new-menu.agents"));
 
-// Every conversation, with its machine, space and folder: each pane running an agent,
-// including one that reports no status, such as `claude attach` to a background session
-// (Herdr's agents() leaves those out). Not by p.app: it outlives the agent.
+// Every conversation, with its machine, space and folder: each pane running an agent
+// (model.js runsAgent, the same test the tab bar uses).
 function conversations() {
   const reported = new Map(agents().map((a) => [a.pane, a]));
   const terms = new Map(terminals().map((x) => [x.address, x]));
   const tabs = new Map(spaces().flatMap((s) => (s.tabs ?? []).map((tab) => [tab.id, { tab, space: s }])));
-  const keys = agentKeys();
-  return panes().filter((p) => p.terminal && (reported.has(p.pane) || p.program?.agent || keys.has(p.program?.key))).map((p, i) => {
+  const keys = keysNow();
+  return panes().filter((p) => runsAgent(p, reported, keys)).map((p, i) => {
     const a = reported.get(p.pane), address = a?.address ?? p.terminal;
     const at = tabs.get(p.tab), term = terms.get(address);
     const program = a?.program ?? p.program;
@@ -160,7 +159,7 @@ function newSession(pill) {
 // Picking a project (null: Unsorted) shows its tabs in the tab bar: its last-used pane gets
 // focus, else its first tab's; with no tabs, the bar shows it empty until focus moves.
 function pickProject(name) {
-  const tabs = tabsOf(spaces(), panes(), agents());
+  const tabs = tabsOf(spaces(), panes(), agents(), keysNow());
   const groups = tabGroups(tabs, state(), name, { home: home(), pills: shared(PILLS) ?? [], order: shared(TAB_ORDER) ?? [] });
   const pane = landing(groups, (shared(LAST) ?? {})[name ?? UNSORTED]);
   setShared(PICK, { project: name, at: Date.now() });
