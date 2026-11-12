@@ -342,20 +342,23 @@ export default class Tabs extends View {
 
   // A tab: only its own background says it's the shown one. It always keeps room for its close
   // button (shown on the shown tab and under the pointer), so picking a tab changes no width.
+  // While a tab is dragged, everything stays gray: the tab it would join turns the hover gray
+  // and shows a split icon, a gray line marks where it would move to instead, and another
+  // machine's tab doesn't light up (the pointer says no).
   tab(t, g, tab, color, active) {
     const on = tab.id === active, d = this.drag, to = d?.moved ? this.target() : null;
     const aimed = to && !to.blank && to.tab.id === tab.id ? to.zone : null;
     const lifted = d?.moved && d.id === tab.id && d.kind === "tab";
-    const signal = aimed === "deny" ? t.blocked : (t.ansi6 ?? t.accent);
     return h_flex().id(`tab-${tab.id}`).relative().h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
       .border(1).border_color(t.chrome).bg(on ? t.raised : t.chrome).text_color(on ? t.foreground : t.muted)
-      .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+      .when(!on && !d?.moved, (el) => el.hover((s) => s.bg(t.hover)))
       .on_hover((inside, cx) => {
         if (inside && this.hoverTab !== tab.id) { this.hoverTab = tab.id; cx.notify(); }
         else if (!inside && this.hoverTab === tab.id) { this.hoverTab = null; cx.notify(); }
       })
       .when(lifted, (el) => el.opacity(0.4))
-      .when(aimed === "merge" || aimed === "deny", (el) => el.border_color(signal).border_dashed().bg(faint(signal, "1f", t.hover)))
+      .when(aimed === "merge", (el) => el.bg(t.hover))
+      .when(aimed === "deny", (el) => el.cursor_not_allowed())
       .on_mouse_down("left", (e, cx) => {
         cx.stop_propagation(); // a press on a tab doesn't drag the window
         const p = this.pressPane;
@@ -372,8 +375,8 @@ export default class Tabs extends View {
         .opacity(on || this.hoverTab === tab.id ? 1 : 0).hover((s) => s.text_color(t.foreground))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => { cx.stop_propagation(); this.reopen.close(cx, tab.id); }).child(svg("mods/pane/close.svg").size(12)))
-      .when(aimed === "merge", (el) => el.child(svg("mods/workspace-chrome/panel-right.svg").size(13).flex_none().text_color(signal)))
-      .when(aimed === "before" || aimed === "after", (el) => el.child(div().absolute().top(4).bottom(4).w(2).rounded(1).bg(signal)
+      .when(aimed === "merge", (el) => el.child(svg("mods/workspace-chrome/panel-right.svg").size(13).flex_none().text_color(t.muted)))
+      .when(aimed === "before" || aimed === "after", (el) => el.child(div().absolute().top(4).bottom(4).w(2).rounded(1).bg(t.muted)
         .when(aimed === "before", (line) => line.left(-5)).when(aimed === "after", (line) => line.right(-5))));
   }
 
@@ -395,14 +398,15 @@ export default class Tabs extends View {
       .child(div().absolute().left(2).right(2).bottom(3).h(1).rounded(1).bg(faint(color, "b3", color)));
   }
 
-  // The dragged tab or pane, where the pointer holds it. Pointer positions are screen pixels;
-  // sizes are scaled by the zoom setting, so the offset is divided by it.
+  // The dragged tab or pane, where the pointer holds it: it looks like the shown tab, lifted.
+  // Pointer positions are screen pixels; sizes are scaled by the zoom setting, so the offset is
+  // divided by it.
   ghost(t) {
     const d = this.drag;
     if (!d?.moved || !d.at) return null;
     const z = Number(settings()?.zoom) || 1, icon = this.programIcon(t, d.program);
     return h_flex().absolute().left((d.at.x - d.grab.x) / z).top((d.at.y - d.grab.y) / z).h(29).px(10).gap(7).rounded(7).items_center()
-      .text_size(12.8).text_color(t.foreground).border(1).border_color(t.accent).bg(t.popover).shadow_md()
+      .text_size(12.8).text_color(t.foreground).border(1).border_color(t.border).bg(t.raised).shadow_md()
       .when(Boolean(icon), (el) => el.child(icon))
       .child(div().max_w(170).truncate().child(d.name ?? ""))
       .when(d.kind === "tab" && d.count > 1, (el) => el.child(div().text_color(t.muted).child(`+${d.count - 1}`)));
@@ -471,8 +475,8 @@ export default class Tabs extends View {
         .when(!groups.length, (el) => el.child(div().px(6).text_size(12).text_color(t.dim).child(`No tabs in ${project ?? "Unsorted"} yet`)))
         .children(groups.map((g) => this.group(t, g, colors[g.key] ?? t.accent, active)))
         // One pane of a split let go here becomes a tab of its own.
-        .when(Boolean(to?.blank), (el) => el.child(h_flex().h(29).px(12).ml(6).flex_none().items_center().rounded(7).border(1).border_dashed()
-          .border_color(t.ansi6 ?? t.accent).text_size(12).text_color(t.ansi6 ?? t.accent).child("New tab"))))
+        .when(Boolean(to?.blank), (el) => el.child(h_flex().h(29).px(12).ml(6).flex_none().items_center().rounded(7)
+          .bg(t.hover).text_size(12).text_color(t.muted).child("New tab"))))
       .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
       .child(overviewButton)
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
