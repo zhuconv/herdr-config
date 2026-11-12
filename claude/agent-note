@@ -3,8 +3,13 @@
 
 UserPromptSubmit: the start of the prompt goes in the hc label note.prompt.
 Stop: the end of the reply (its last two lines) goes in note.said.
-Both land on the hc terminal the agent runs in ($HC_TERMINAL_ID); outside hc it does
-nothing. It prints nothing (a UserPromptSubmit hook's output would join the prompt) and
+Each also sets note.state: "working" from a prompt until the reply ends, then "idle". Herdr's
+Agents list, tab bar and Projects panel read it for sessions that report no status to Herdr
+(background ones, `claude attach`). An interrupted reply has no Stop: it stays "working" until
+the next prompt or reply.
+All land on the hc terminal the agent runs in ($HC_TERMINAL_ID). A background session runs
+under Claude's daemon, outside any terminal: its labels go on the terminal showing it with
+`claude attach <its id>`, found through hc. Outside hc it does nothing. It prints nothing (a UserPromptSubmit hook's output would join the prompt) and
 always exits 0, so it never gets in Claude's way.
 
 On a cluster compute node the terminal's hc runs on the login node. There the label goes
@@ -22,31 +27,48 @@ import sys
 
 
 def main():
-    term = os.environ.get("HC_TERMINAL_ID")
+    event = json.load(sys.stdin)
+    term = os.environ.get("HC_TERMINAL_ID") or attached(event.get("session_id"))
     if not term:
         return
-    event = json.load(sys.stdin)
     name = event.get("hook_event_name")
     if name == "UserPromptSubmit":
-        key, text = "note.prompt", " ".join((event.get("prompt") or "").split())[:160]
+        key, text, state = "note.prompt", " ".join((event.get("prompt") or "").split())[:160], "working"
     elif name == "Stop":
         reply = event.get("last_assistant_message") or last_reply(event.get("transcript_path"))
-        key, text = "note.said", gist(reply)
+        key, text, state = "note.said", gist(reply), "idle"
     else:
         return
-    if text:
-        label(term, f"{key}={text}")
+    label(term, f"note.state={state}", *([f"{key}={text}"] if text else []))
 
 
-def label(term, pair):
+def attached(session):
+    """The local hc terminal running `claude attach <session, or the start of it>`, if any."""
+    if not session or os.environ.get("HC_VIA") or os.environ.get("SLURM_SUBMIT_HOST"):
+        return None
+    hc = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
+    out = subprocess.run([hc, "ls", "--json"], capture_output=True, text=True, timeout=4).stdout
+    for t in json.loads(out or "{}").get("terminals", []):
+        address = t.get("address") or ""
+        if "/" in address or t.get("state") != "live":
+            continue  # another machine's, or ended
+        got = subprocess.run([hc, "get", address, "--json"], capture_output=True, text=True, timeout=4).stdout
+        argv = (json.loads(got or "{}").get("foreground") or {}).get("argv") or []
+        if len(argv) >= 3 and os.path.basename(argv[0]) == "claude" and argv[-2] == "attach" \
+                and len(argv[-1]) >= 6 and session.startswith(argv[-1]):
+            return address
+    return None
+
+
+def label(term, *pairs):
     via = (os.environ.get("HC_VIA") or os.environ.get("SLURM_SUBMIT_HOST") or "").split(".")[0]
     if via and via != socket.gethostname().split(".")[0]:
-        remote = "~/.local/bin/hc label " + shlex.quote(term) + " " + shlex.quote(pair)
+        remote = "~/.local/bin/hc label " + " ".join(shlex.quote(x) for x in (term, *pairs))
         subprocess.run(["ssh", "-o", "ConnectTimeout=8", via, remote],
                        stdin=subprocess.DEVNULL, capture_output=True, timeout=12)
     else:
         hc = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
-        subprocess.run([hc, "label", term, pair], capture_output=True, timeout=4)
+        subprocess.run([hc, "label", term, *pairs], capture_output=True, timeout=4)
 
 
 CJK = re.compile(r"[\u2e80-\u9fff\uff00-\uffef]")

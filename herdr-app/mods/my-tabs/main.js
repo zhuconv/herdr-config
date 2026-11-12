@@ -32,8 +32,10 @@ const projectState = () => {
 const hash = (s) => [...String(s)].reduce((h, c) => (Math.imul(h, 31) + c.charCodeAt(0)) >>> 0, 2166136261).toString(36);
 // A color at some opacity ("80" = 50%), when it's a plain #rrggbb; else the fallback.
 const faint = (c, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(c ?? "") ? c + alpha : fallback);
-// Every tab, with the agents it lists (projects.js tabsOf), told apart as the left panel does.
-const allTabs = () => tabsOf(spaces(), panes(), agents(), agentKeys(shared("new-menu.agents")));
+// Every tab, with the agents it lists (projects.js tabsOf), told apart as the left panel does;
+// a background session's state from its agent-note label.
+const allTabs = () => tabsOf(spaces(), panes(), agents(), agentKeys(shared("new-menu.agents")),
+  new Map(terminals().map((x) => [x.address, x.labels])));
 const select = (tab) => { run("space.select", { id: tab.space }); run("tab.select", { id: tab.id }); };
 
 function find(node, id) {

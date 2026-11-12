@@ -231,16 +231,54 @@ export const agentKeys = (menu) => new Set(["claude", "codex", "gemini", "openco
 export const runsAgent = (p, reported, keys) =>
   Boolean(p.terminal && (reported.has(p.pane) || p.program?.agent || keys.has(p.program?.key)));
 
+// What a session that reports no status to Herdr (a background one, `claude attach`) says
+// through the agent-note hook (claude/agent-note): its terminal's label note.state, "working"
+// from a prompt until the reply ends, else "idle"; null without one. labels: the terminal's.
+export const noteStatus = (labels) => {
+  const s = labels?.["note.state"];
+  return s === "working" || s === "idle" ? s : null;
+};
+
+// The Agents list (mods/my-agents) with background sessions too (`claude attach` to one), which
+// Herdr's agents() leaves out: found by runsAgent, their state from noteStatus (idle without
+// one; never "done" or "needs you": only a reported status says that). Each goes in at its place in space, tab, pane order (the grouped view puts
+// neighbours together); the reported agents keep theirs.
+export function withBackground(list, { panes = [], spaces = [], terminals = [], keys = agentKeys() } = {}) {
+  const reported = new Map(list.map((a) => [a.pane, a]));
+  const extra = panes.filter((p) => !reported.has(p.pane) && runsAgent(p, reported, keys));
+  if (!extra.length) return list;
+  const at = new Map(), order = new Map(panes.map((p, i) => [p.pane, i]));
+  spaces.forEach((s, si) => (s.tabs ?? []).forEach((tab) => at.set(tab.id, { tab, space: s, si })));
+  const labels = new Map(terminals.map((x) => [x.address, x.labels]));
+  const key = (a) => [at.get(a.tab)?.si ?? 1e9, at.get(a.tab)?.tab.index ?? 0, order.get(a.pane) ?? 1e9];
+  const cmp = (x, y) => x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+  const out = [...list];
+  for (const p of extra) {
+    const w = at.get(p.tab);
+    const b = {
+      address: p.terminal, pane: p.pane, space: w?.space.id ?? "", space_name: w?.space.name ?? "",
+      tab: p.tab, tab_index: w?.tab.index ?? 0, tab_name: w?.tab.name ?? "",
+      status: noteStatus(labels.get(p.terminal)) ?? "idle",
+      app: p.app ?? null, program: p.program, title: p.title ?? "", seq: 0,
+      pinned: Boolean(labels.get(p.terminal)?.["herdr.pinned"]), focused: Boolean(p.focused),
+    };
+    const k = key(b), i = out.findIndex((a) => cmp(key(a), k) > 0);
+    out.splice(i < 0 ? out.length : i, 0, b);
+  }
+  return out;
+}
+
 // Every tab, with its machine, its directory (its first agent's folder, else its first
 // terminal's, else its space's), its panes and the ones it lists, each named as the left panel
 // names a conversation.
-export function tabsOf(spaces, panes, agents, keys = agentKeys()) {
+// labels: each terminal's (terminals()), for the state of agents that report none (noteStatus).
+export function tabsOf(spaces, panes, agents, keys = agentKeys(), labels = new Map()) {
   const reported = new Map((agents ?? []).map((a) => [a.pane, a]));
   return (spaces ?? []).flatMap((s) => (s.tabs ?? []).map((tab) => {
     const mine = (panes ?? []).filter((p) => p.tab === tab.id).map((p) => {
-      const a = reported.get(p.pane), program = a?.program ?? p.program;
+      const a = reported.get(p.pane), program = a?.program ?? p.program, agent = runsAgent(p, reported, keys);
       return { pane: p.pane, terminal: p.terminal, cwd: p.cwd ?? null, title: a?.title ?? p.title,
-        status: a?.status ?? p.status ?? null, program, agent: runsAgent(p, reported, keys) };
+        status: a?.status ?? p.status ?? (agent ? noteStatus(labels.get(p.terminal)) : null), program, agent };
     });
     // A tab is its agents. The terminals beside them (a shell, a quick command) come and go, so
     // they aren't listed and don't say its directory; a tab with no agent shows its first pane.

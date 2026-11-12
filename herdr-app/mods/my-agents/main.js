@@ -4,6 +4,10 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
+import { agentKeys, withBackground } from "./projects.js";
+
+// my-agents: background sessions too (`claude attach` to one), which Herdr's agents() leaves
+// out: projects.js withBackground (a copy of mods/my-projects/model.js).
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -229,7 +233,7 @@ export default class Agents extends View {
     // the agent it would switch to rather than the focused one: where you'd land.
     const picking = shared("my-tabs.switcher");
     const picked = picking?.list?.[picking.index] ?? null;
-    let list = agents();
+    let list = withBackground(agents(), { panes: panes(), spaces: spaces(), terminals: terminals(), keys: agentKeys(shared("new-menu.agents")) });
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     const all = terminals();
     this.migratePins(all);

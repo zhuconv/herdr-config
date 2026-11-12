@@ -47,10 +47,10 @@ git pull && ./install.sh
 | `herdr-app/mods/agent-switcher/` | ⌃Tab 弹窗 |
 | `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带 pane 的拷贝）：右上角原来的左右分屏、上下分屏、全屏、关闭四个按钮，换成一个 "Move to new tab"，只在分屏里的窗格上出现，点它把这个窗格拆成单独的 tab。分屏、全屏、关闭还能用快捷键和右键菜单 |
 | `herdr-app/mods/my-menu/` | 右键菜单（Herdr 自带 menu 的拷贝）：终端里右键，分屏里的窗格多一项 "Move to new tab"；顶部栏右键分屏的 tab，每个名字有一项 "Move X to new tab" |
-| `herdr-app/mods/my-agents/` | 左栏 Agents 列表，显示成 "agent · space" |
+| `herdr-app/mods/my-agents/` | 左栏 Agents 列表，显示成 "agent · space"。后台会话（`claude attach` 那种，Herdr 自己的列表里没有）也列出来，工作中/空闲来自 agent-note 打的 `note.state` 标签。`projects.js` 是 my-projects/model.js 的拷贝 |
 | `herdr-app/mods/agent-deck-*` | Overview 面板，来自 [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
 | `herdr-app/settings.json`, `themes/warp-dracula.json` | 字体、主题、缩放、提示音 |
-| `claude/agent-note` | Claude Code hook：记下最近一条 prompt 和回复的首尾句，给 ⌃Tab 卡片用；`install.sh` 会把它加进 `~/.claude/settings.json` |
+| `claude/agent-note` | Claude Code hook：记下最近一条 prompt 和回复的首尾句，给 ⌃Tab 卡片用；同时打 `note.state` 标签（提问后 working，回答完 idle），后台会话靠它在 Agents 列表、顶部栏和左栏显示状态。后台会话不在终端里跑，它按会话 ID 找到 `claude attach` 那个终端；`install.sh` 会把它加进 `~/.claude/settings.json` |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常查找下一个 |
 
 不同步的：Herdr 自己写的状态（`shared.json`、`view.json`、`data/` 等）、hc 的机器配置（比如 vista，要在新电脑上 `hc machine add`）。

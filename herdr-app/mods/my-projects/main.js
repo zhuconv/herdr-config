@@ -19,7 +19,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, window } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -122,7 +122,8 @@ function conversations() {
     const at = tabs.get(p.tab), term = terms.get(address);
     const program = a?.program ?? p.program;
     return {
-      address, pane: p.pane, status: a?.status ?? p.status ?? null, focused: p.focused, program, order: i,
+      // A background session reports no status: its agent-note label says working or idle.
+      address, pane: p.pane, status: a?.status ?? p.status ?? noteStatus(term?.labels), focused: p.focused, program, order: i,
       machine: at?.space.machine ?? (address.includes("/") ? address.split("/")[0] : null),
       space: at?.space.id ?? null,
       cwd: p.cwd || term?.cwd || at?.space.folder || "",
