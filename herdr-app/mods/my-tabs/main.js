@@ -76,7 +76,7 @@ export default class Tabs extends View {
       for (;;) {
         const c = String(await nextCommand());
         try {
-          if (c === "close" || c.startsWith("close ")) this.reopen.close(cx, c.slice(6).trim() || null);
+          if (c === "close" || c.startsWith("close ")) this.closeTab(cx, c.slice(6).trim() || null);
           else if (c === "reopen") await this.reopen.reopen(cx);
           else if (c === "waiting" || c === "waiting away") this.goWaiting(c === "waiting away");
           else if (c === "switch" || c === "switch-back") this.switchAgent(c === "switch" ? 1 : -1);
@@ -146,6 +146,29 @@ export default class Tabs extends View {
     const project = this.shownProject(tabs, st);
     const groups = tabGroups(tabs, st, project, { home: home(), pills: shared(PILLS) ?? [], order: shared(ORDER) ?? [] });
     return { st, project, groups };
+  }
+
+  // ⌘W, a tab's ×, the tab menu's Close: reopen.js parks the pane, or the tab with its last pane.
+  // When that takes the shown tab away, the bar's neighbour (projects.js replacement) is shown
+  // first, so Herdr never shows the next tab of the space (maybe another project's) in between.
+  // id: a tab ("tb…") or a pane ("p…"); none: the focused pane, or its tab if it's alone there.
+  closeTab(cx, id) {
+    const f = focused(), all = panes(), pane = id && String(id).split("/").pop().startsWith("p");
+    const tabId = id ? (pane ? all.find((p) => p.pane === id)?.tab : id) : f?.tab;
+    const mine = all.filter((p) => p.tab === tabId);
+    const whole = (id && !pane) || mine.length <= 1 || (!id && !mine.some((p) => p.pane === f?.pane));
+    const shown = this.lastShown;
+    if (whole && tabId && tabId === f?.tab && shown?.tab === tabId) {
+      const next = replacement(shown, new Set(shown.list.filter((x) => x !== tabId)));
+      const to = next ? allTabs().find((t) => t.id === next) : null;
+      if (to) {
+        this.lastShown = null;
+        select(to);
+        this.reopen.close(cx, id ?? tabId);
+        return;
+      }
+    }
+    this.reopen.close(cx, id);
   }
 
   // ⌘1–⌘9 ("tab-1"…"tab-9" in keys.json): the bar's tabs (nthTab). Herdr's own tab.select
@@ -413,7 +436,7 @@ export default class Tabs extends View {
       .child(div().id(`close-${tab.id}`).size(14).flex_none().flex().items_center().justify_center().rounded(4).text_color(t.dim)
         .opacity(on || this.hoverTab === tab.id ? 1 : 0).hover((s) => s.text_color(t.foreground))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-        .on_click((_e, cx) => { cx.stop_propagation(); this.reopen.close(cx, tab.id); }).child(svg("mods/pane/close.svg").size(12)))
+        .on_click((_e, cx) => { cx.stop_propagation(); this.closeTab(cx, tab.id); }).child(svg("mods/pane/close.svg").size(12)))
       .when(aimed === "merge", (el) => el.child(svg("mods/workspace-chrome/panel-right.svg").size(13).flex_none().text_color(t.muted)))
       .when(aimed === "before" || aimed === "after", (el) => el.child(div().absolute().top(4).bottom(4).w(2).rounded(1).bg(t.muted)
         .when(aimed === "before", (line) => line.left(-5)).when(aimed === "after", (line) => line.right(-5))));

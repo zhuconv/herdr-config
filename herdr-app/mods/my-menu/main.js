@@ -65,7 +65,9 @@ function items(p, git) {
         ...(Array.isArray(p.extra) ? p.extra : []),
         ["Rename", "tab.rename", { id: tg.id }],
         ["New tab", "tab.new", { space: tg.space }],
-        ["Close", "tab.close", { id: tg.id }],
+        // my-menu: as the tab's × and ⌘W do (mods/my-tabs): parked, ⌘⇧W brings it back, and
+        // the bar's next tab shows, not the space's.
+        ["Close", `my-tabs.close ${tg.id}`],
       ];
     case "space":
       return [
@@ -88,7 +90,7 @@ function items(p, git) {
 
 function menuIcon(command) {
   if (command.startsWith("my-tabs.split-out")) return "mods/my-menu/pop-out.svg";
-  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
+  const name = /\.close( |$)/.test(command) ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
   return `mods/workspace-chrome/${name}.svg`;
 }
 
@@ -146,7 +148,7 @@ export default class Menu extends View {
       .children(
         list.map((it, i) =>
           v_flex()
-            .when(i > 0 && (it[1].endsWith(".close") || it[1] === "app.help" || (it[1] === "app.theme" && list[i - 1][1] !== "app.theme")
+            .when(i > 0 && (/\.close( |$)/.test(it[1]) || it[1] === "app.help" || (it[1] === "app.theme" && list[i - 1][1] !== "app.theme")
               || (list[i - 1][1].startsWith("my-tabs.split-out") && !it[1].startsWith("my-tabs.split-out"))), el => el.child(div().mx(7).my(4).h(1).bg(t.border)))
             .child(h_flex()
             .id(`mi-${i}`)
