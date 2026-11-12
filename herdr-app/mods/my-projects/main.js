@@ -6,9 +6,11 @@
 // directories, each with its pill's color dot); its chevron folds it. Drag a pill among its
 // group's pills to reorder them, or onto another group to move its directory there;
 // right-click it to move it (into a project, a new one, or back to Unsorted). Right-click a
-// project to rename it, change its icon or delete it (its directories go back to Unsorted);
-// drag a project's row to reorder the projects. Shells aren't listed here; a tab with no agent
-// shows on the tab bar.
+// project to make a new directory for it (on any machine: made there, added to the project,
+// Claude started in it), rename it, change its icon or delete it (its directories go back to
+// Unsorted); drag a project's row to reorder the projects. On Vista (a login node, where Claude
+// can't run) the + and New directory… open a terminal instead. Shells aren't listed here; a
+// tab with no agent shows on the tab bar.
 //
 // Kept in shared state: "my-projects.state" ({ projects: [{ name, dirs }], loose }; see
 // model.js), "my-projects.icons" (each project's icon), "my-projects.order" (the projects'
@@ -18,14 +20,17 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, window } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
+import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window } from "herdr";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
 const ICONS = `${MOD}.icons`;
 const ORDER = `${MOD}.order`;
 const PILLS = `${MOD}.pills`;
+// The connected machines (hc machine ls), as the New directory dialog last found them: its
+// first draw and its height start from these.
+const MACHINES = `${MOD}.machines`;
 // With the tab bar (mods/my-tabs), which shows one project's tabs: the project picked here
 // ({ project, at }; null: Unsorted), each project's last-used pane (the bar keeps it), each
 // directory's color (pill dots, tab groups), the project the bar shows ({ project }), the
@@ -152,16 +157,29 @@ const iconOf = (name) => (shared(ICONS) ?? {})[name] ?? assignIcon(name);
 const homeOf = (machine) => (machine ? null : home());
 const where = (key) => { const d = splitDir(key); return `${d.machine ?? "local"} · ${shortPath(d.path, homeOf(d.machine))}`; };
 
-// Starts Claude in a directory: a new tab in the space its conversations are in, else the
-// machine's first space, else a new space there.
-function newSession(pill) {
-  const { machine, path } = pill;
-  const space = pill.convs.find((c) => c.space)?.space ?? spaces().find((s) => (s.machine ?? null) === machine)?.id;
+// Starts Claude in a directory on a machine: a new tab in the given space, else the machine's
+// first space, else a new space there. On a login node (model.js agentsRunOn: Vista's) it opens
+// a terminal there instead.
+function openIn(machine, path, space = null) {
+  const at = space ?? spaces().find((s) => (s.machine ?? null) === machine)?.id;
   const known = (shared("new-menu.agents") ?? {})[machine ?? ""] ?? [];
-  const argv = known.find((a) => a.key === "claude")?.run ?? ["claude"];
-  if (space) run("tab.new", { space, folder: path, argv });
-  else run("space.new", { machine: machine ?? "", folder: path, argv });
+  const argv = agentsRunOn(machine) ? known.find((a) => a.key === "claude")?.run ?? ["claude"] : null;
+  const opts = { folder: path, ...(argv ? { argv } : {}) };
+  if (at) run("tab.new", { space: at, ...opts });
+  else run("space.new", { machine: machine ?? "", ...opts });
 }
+// A pill's +: in the space its conversations are in.
+const newSession = (pill) => openIn(pill.machine, pill.path, pill.convs.find((c) => c.space)?.space);
+
+// A directory made for a project (model.js addDir); its pill goes last there.
+function addDirTo(key, to) {
+  setShared(PILLS, withGroup(shared(PILLS) ?? [], [...pillKeys(to).filter((k) => k !== key), key]));
+  const s = state(), next = addDir(s, key, to);
+  if (next !== s) save(next);
+}
+
+// Makes a directory (with its parents) and prints where it is: "~/x", "x" (from home) or "/x".
+const MKDIR = 'p=$1\ncase $p in "~") p=$HOME ;; "~/"*) p=$HOME/${p#"~/"} ;; /*) ;; *) p=$HOME/$p ;; esac\nmkdir -p -- "$p" && cd "$p" && pwd -P';
 
 // Picking a project (null: Unsorted) shows its tabs in the tab bar: its last-used pane gets
 // focus, else its first tab's; with no tabs, the bar shows it empty until focus moves.
@@ -185,11 +203,14 @@ function openDirMenu(key) {
   const i = dirTargets(key);
   popup({ role: "dir", dir: key }, 236, 10 + 26 + Math.min(i.names.length, 8) * 30 + (i.names.length ? 9 : 0) + 30 + (i.from !== null ? 30 : 0));
 }
-const openProject = (project) => popup({ role: "project", project }, 212, 10 + 30 + 30 + 9 + 30);
+const openProject = (project) => popup({ role: "project", project }, 212, 10 + 30 + 9 + 30 + 30 + 9 + 30);
 // Right-click on the list where there's no row (or on Unsorted's row).
 const openBlank = () => popup({ role: "blank" }, 200, 10 + 30 + 9 + 30 + 30);
 const openNew = (dir = null) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "new", dir } });
 const openRename = (project) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "rename", project } });
+// The New directory dialog: a row of machines (about six fit; more wrap onto another row).
+const openNewDir = (project) => openOverlay({ mod: MOD, kind: "dialog", width: 420,
+  height: 288 + 32 * (Math.ceil((1 + (shared(MACHINES) ?? []).length) / 6) - 1), props: { role: "newdir", project } });
 // Deleting goes through Herdr's own confirm dialog, which runs "my-projects.delete <name>".
 function askDelete(name) {
   const n = projectsNow().projects.find((p) => p.name === name)?.pills.length ?? 0;
@@ -465,13 +486,15 @@ export default class Projects extends View {
     return div().absolute().left(mid / z - 1).top(r.y / z + 2).w(2).h(r.h / z - 4).rounded(1).bg(ring);
   }
 
-  // An open pill's full path, with a + that starts Claude there. Right-click: its directory's menu.
+  // An open pill's full path, with a + that starts Claude there (on Vista: a terminal, see
+  // openIn). Right-click: its directory's menu.
   pathRow(t, pl) {
     return h_flex().id(`path-${hash(pl.key)}`).h(20).flex_none().pl(35).pr(2).gap(6).items_center()
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openDirMenu(pl.key); })
       .child(div().flex_1().min_w(0).truncate().text_size(11).text_color(t.dim).child(shortPath(pl.path, homeOf(pl.machine))))
       .child(div().id(`new-${hash(pl.key)}`).size(20).flex_none().rounded(5).flex().items_center().justify_center()
-        .text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground)).tooltip("New Claude session here")
+        .text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.hover).text_color(t.foreground))
+        .tooltip(agentsRunOn(pl.machine) ? "New Claude session here" : `New terminal here (Claude can't run on ${pl.machine}'s login node)`)
         .on_click(() => newSession(pl)).child(svg(chrome("plus")).size(12)));
   }
 
@@ -625,7 +648,7 @@ export default class Projects extends View {
 const esc = (e, cx) => { if (e.key === "escape") { closeOverlay(props().overlay); cx.stop_propagation(); } };
 
 // The popups: a project's icon, a directory's menu, a project's menu, the blank-area menu,
-// and the name dialog (a new project, or renaming one).
+// the name dialog (a new project, or renaming one) and the New directory dialog.
 class Popup {
   init(cx) {
     this.handle = cx.focus_handle();
@@ -641,7 +664,54 @@ class Popup {
       this.input.on("submit", (_e, cx) => this.submit(cx));
       this.input.focus();
       cx.timer.after(600, () => this.input.focus());
+    } else if (p.role === "newdir") {
+      // Starts on the machine of the project's first directory; the list of machines comes
+      // from hc (the last one found shows meanwhile).
+      const first = state().projects.find((x) => x.name === p.project)?.dirs?.[0];
+      this.on = first ? splitDir(first).machine : null;
+      this.connected = null;
+      this.busy = false;
+      this.input = InputState.new({ placeholder: "~/new-directory" });
+      this.input.on("change", (_e, cx) => { this.error = null; cx.notify(); });
+      this.input.on("submit", (_e, cx) => this.makeDir(cx));
+      this.input.focus();
+      cx.timer.after(600, () => this.input.focus());
+      cx.spawn(async (cx) => {
+        try {
+          const r = await hc(["machine", "ls", "--json"]);
+          if (r.code === 0) {
+            this.connected = (JSON.parse(r.stdout).machines ?? []).filter((m) => m.state === "connected" && !m.temporary).map((m) => m.name);
+            if (JSON.stringify(shared(MACHINES) ?? []) !== JSON.stringify(this.connected)) setShared(MACHINES, this.connected);
+          }
+        } catch {}
+        cx.notify();
+      });
     } else this.handle.focus();
+  }
+
+  // New directory…: makes it on the picked machine (or finds it there), adds it to the
+  // project, and starts Claude in it (a terminal on Vista). A failure stays in the dialog.
+  async makeDir(cx) {
+    const p = props(), raw = this.input.value().trim(), on = this.on;
+    if (this.busy) return;
+    if (!raw) { this.error = "Type the directory's path."; cx.notify(); return; }
+    if (on && this.connected && !this.connected.includes(on)) {
+      this.error = `${on} isn't connected: run hc machine login ${on} in a terminal.`; cx.notify(); return;
+    }
+    this.busy = true; this.error = null; cx.notify();
+    let r = null;
+    try { r = await exec("/bin/sh", ["-c", MKDIR, "sh", raw], { on, timeout: 20000 }); } catch {}
+    this.busy = false;
+    if (this.gone) return; // closed meanwhile: it stays out of the project, nothing starts
+    const path = r?.code === 0 ? r.stdout.trim().split("\n").pop() : "";
+    if (!path.startsWith("/")) {
+      this.error = r ? r.stderr.trim().split("\n")[0] || "Couldn't make it." : `Couldn't reach ${on ?? "this computer"}.`;
+      cx.notify();
+      return;
+    }
+    addDirTo(dirKey(on, path), p.project);
+    openIn(on, path);
+    closeOverlay(p.overlay);
   }
 
   submit(cx) {
@@ -708,6 +778,9 @@ class Popup {
   projectView(t, p) {
     const name = p.project;
     return v_flex().id("project-menu").track_focus(this.handle).on_key_down(esc).size_full().p(5).bg(t.popover).text_size(12.8)
+      .child(this.item(t, "pm-newdir", svg(chrome("folder-plus")).size(14).flex_none().text_color(t.muted), "New directory…",
+        () => { closeOverlay(p.overlay); openNewDir(name); }))
+      .child(div().mx(7).my(4).h(1).flex_none().bg(t.border))
       .child(this.item(t, "pm-rename", svg(chrome("square-pen")).size(14).flex_none().text_color(t.muted), "Rename…",
         () => { closeOverlay(p.overlay); openRename(name); }))
       .child(this.item(t, "pm-icon", tile(iconOf(name), 16), "Change icon…",
@@ -746,8 +819,43 @@ class Popup {
         .child(button("np-create", renaming ? "Rename" : "Create", true, (_e, cx) => this.submit(cx))));
   }
 
+  // The New directory dialog: which machine (this computer and the connected ones, as chips),
+  // the path there, and what will happen.
+  newDirView(t, p) {
+    const names = [...new Set([...(this.connected ?? shared(MACHINES) ?? []), ...(this.on ? [this.on] : [])])];
+    const chip = (m) => {
+      const on = m === this.on;
+      return div().id(`nd-${m ?? "local"}`).h(26).px(10).flex().flex_none().items_center().rounded(13).border_1()
+        .border_color(on ? ringColor(t) : t.input).bg(on ? t.selected : t.raised).text_size(12)
+        .text_color(on ? t.foreground : t.muted).cursor_pointer().when(!on, (el) => el.hover((s) => s.bg(t.hover)))
+        .on_click((_e, cx) => { this.on = m; this.error = null; this.input.focus(); cx.notify(); })
+        .child(m ?? "local");
+    };
+    const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
+      .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
+      .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
+      .hover((s) => s.opacity(0.88)).on_click(action).child(text);
+    const label = (text) => div().pt(14).pb(7).text_size(11.5).text_color(t.dim).child(text);
+    const hint = agentsRunOn(this.on) ? `Made if it isn't there, added to ${p.project}, and Claude starts in it.`
+      : `Made if it isn't there and added to ${p.project}. A terminal opens in it: Claude can't run on ${this.on}'s login node.`;
+    const leave = () => { this.gone = true; closeOverlay(p.overlay); };
+    return v_flex().id("new-dir").track_focus(this.handle).on_key_down((e, cx) => { if (e.key === "escape") this.gone = true; esc(e, cx); }).w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
+      .child(h_flex().items_center().gap(8)
+        .child(div().flex_1().min_w(0).truncate().text_size(15).font_semibold().child(`New directory in ${p.project}`))
+        .child(div().flex_none().text_size(11).text_color(t.dim).child("Esc")))
+      .child(label("Machine"))
+      .child(h_flex().flex_wrap().gap(6).children([null, ...names].map(chip)))
+      .child(label("Path"))
+      .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(ringColor(t)).bg(t.background).text_size(12.8).text_color(t.foreground))
+      .child(div().pt(6).text_size(11.5).text_color(this.error ? t.blocked : t.dim).child(this.error ?? hint))
+      .child(h_flex().pt(18).gap(8).justify_end()
+        .child(button("nd-cancel", "Cancel", false, leave))
+        .child(button("nd-create", this.busy ? "Creating…" : "Create", true, (_e, cx) => this.makeDir(cx))));
+  }
+
   render() {
     const t = theme(), p = props() ?? {};
+    if (p.role === "newdir") return this.newDirView(t, p);
     if (p.role === "icon") return this.iconView(t, p);
     if (p.role === "dir") return this.dirView(t, p);
     if (p.role === "project") return this.projectView(t, p);

@@ -118,6 +118,20 @@ export function moveDir(state, key, to) {
   return { projects, loose: tidy(loose, projects) };
 }
 
+// A directory made for a project (its New directory…): kept as one of the project's own, so
+// its pill shows before anything runs there, even when a parent of it is in the project
+// already. Taken from wherever else it was. No such project: nothing changes.
+export function addDir(state, key, to) {
+  const target = state.projects.find((p) => p.name === to);
+  return !target || (target.dirs ?? []).includes(key) ? state : moveDir(state, key, to);
+}
+
+// Machines whose shells are on a login node where an agent must not run: Vista's, where
+// Claude hangs or is killed (it runs inside idev, on a compute node). Starting work in a
+// directory there opens a plain terminal instead.
+export const LOGIN_NODES = ["vista"];
+export const agentsRunOn = (machine) => !LOGIN_NODES.includes(machine ?? "");
+
 // A new project, empty or with this directory. An existing name gets the directory instead.
 export function addProject(state, name, key = null) {
   if (state.projects.some((p) => p.name === name)) return key ? moveDir(state, key, name) : state;
