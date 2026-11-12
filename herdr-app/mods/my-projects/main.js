@@ -230,6 +230,11 @@ function askDelete(name) {
 }
 
 export default class Projects extends View {
+  // Herdr is closing this copy: the ⌥ watcher's loop ends instead of starting another.
+  close() {
+    this.ended = true;
+  }
+
   init(_props, cx) {
     if (props()?.role) { this.part = new Popup(); this.part.init(cx); return; }
     const read = (k, d) => { try { return JSON.parse(localStorage.getItem(k) ?? "null") ?? d; } catch { return d; } };
@@ -246,14 +251,21 @@ export default class Projects extends View {
     this.names = []; // the projects as shown, in order
     // ⌥ held: the rows show their ⌥1–⌥9 numbers. A mod hears modifier keys only with keyboard
     // focus, which a terminal has, so a tiny watcher (optwatch.c, built by install.sh) returns
-    // as ⌥ goes down or up, and starts again. Not built: no numbers.
+    // as ⌥ goes down or up, and starts again. It never gives up for good: when the watcher
+    // ends some other way (killed, not built yet), it starts again a second later (a minute
+    // when it isn't there). It used to stop at the first such end, and the numbers with it.
     this.alt = false;
     cx.spawn(async (cx) => {
       const bin = `${home()}/.local/bin/herdr-optwatch`;
-      for (;;) {
-        let r;
-        try { r = await exec(bin, [this.alt ? "1" : "0"], { timeout: 600000 }); } catch { return; }
-        if (r.code !== 0) return;
+      while (!this.ended) {
+        let r = null;
+        try { r = await exec(bin, [this.alt ? "1" : "0"], { timeout: 600000 }); } catch {}
+        if (this.ended) return;
+        if (!r || r.code !== 0) {
+          if (this.alt) { this.alt = false; cx.notify(); }
+          await cx.sleep(r ? 1000 : 60000);
+          continue;
+        }
         const alt = r.stdout.trim() === "1";
         if (alt !== this.alt) { this.alt = alt; cx.notify(); }
       }
