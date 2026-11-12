@@ -50,10 +50,10 @@ gh repo clone zhuconv/herdr-config ~/herdr-config && ~/herdr-config/install.sh
 在远程机器的 Herdr 终端里跑的 Claude 会话，也能填 ⌃Tab 卡片、显示工作中/空闲，前提是那台机器装了 hook（那台需要有 `python3`）：
 
 ```sh
-./install.sh --remote a5k      # 机器名来自 hc machine ls
+./install.sh --remote <机器名>      # 来自 hc machine ls；每台机器跑一次
 ```
 
-已经装在 a5k、2a5k、4vita2、4vita5 和 vista 上。vista 上的 Claude 跑在计算节点上，hook 通过 ssh 把标签交给 login 节点（`$HC_VIA`，或 idev 里 Slurm 给的 `$SLURM_SUBMIT_HOST`）。
+在 Slurm 集群上，Claude 跑在计算节点上，hook 通过 ssh 把标签交给 login 节点（`$HC_VIA`，或 idev 里 Slurm 给的 `$SLURM_SUBMIT_HOST`）。
 
 ## 改了配置之后
 
@@ -86,7 +86,7 @@ git pull && ./install.sh
 | `claude/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态。`install.sh` 会把它加进 `~/.claude/settings.json` |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常是"查找下一个" |
 | `install.sh`、`save.sh`、`paths.sh` | 安装、存回仓库，以及同步哪些文件的清单 |
-| `docs/` | 可点击模型（GitHub Pages 发布）和截图。`make-demo.py` 用设计画布的文件生成 `index.html`，换成示例名字；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |
+| `docs/` | 可点击模型（GitHub Pages 发布）和截图。`index.html` 是设计画布的文件换成示例名字后的版本；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |
 
 不同步的：Herdr 自己写的状态（`shared.json`、`view.json`、`data/` 等）和 hc 的机器配置（新电脑上用 `hc machine add` 加）。
 

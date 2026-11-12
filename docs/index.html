@@ -299,7 +299,7 @@ p4: { name: 'zsh', agent: false, status: null, dir: 'r-api', since: '' },
 p5: { name: 'ui-polish', agent: true, status: 'idle', dir: 'r-viewer', since: '2h' },
 p6: { name: 'dark-mode', agent: true, status: 'working', dir: 'r-viewer', since: '12m' },
 p7: { name: 'load-test', agent: true, status: 'blocked', dir: 'r-loop', since: '4m' },
-p8: { name: 'train-sweep', agent: true, status: 'idle', dir: 'd-vista', since: '2d' },
+p8: { name: 'train-sweep', agent: true, status: 'idle', dir: 'd-hpc', since: '2d' },
 p9: { name: 'draft-intro', agent: true, status: 'idle', dir: 'a-dir', since: '50m' },
 p10: { name: 'zsh', agent: false, status: null, dir: 'h-dir', since: '' }
 },
@@ -337,27 +337,27 @@ const dirs = {
 'h-dir': { project: 'herdr', machine: null, path: '~/code/herdr-config', base: 'herdr-config', color: C.blue },
 'r-api': { project: 'rel', machine: null, path: '~/code/web-app/api', base: 'api', color: C.blue },
 'r-viewer': { project: 'rel', machine: null, path: '~/code/web-app/frontend', base: 'frontend', color: C.orange },
-'r-loop': { project: 'rel', machine: '2a5k', path: '~/load-tests', base: 'load-tests', color: C.pink },
-'d-vista': { project: 'dbt', machine: 'vista', path: '~', base: '~', color: C.blue },
+'r-loop': { project: 'rel', machine: 'gpu2', path: '~/load-tests', base: 'load-tests', color: C.pink },
+'d-hpc': { project: 'dbt', machine: 'hpc', path: '~', base: '~', color: C.blue },
 'a-dir': { project: 'alpha', machine: null, path: '~/writing/paper', base: 'paper', color: C.blue }
 };
 // The left panel's projects, in its order; each project's directories in its pill order.
 const projects = [
 { id: 'herdr', name: 'herdr', color: C.orange, glyph: G.mountain, dirs: ['h-dir'] },
 { id: 'rel', name: 'web-app', color: C.green, glyph: G.flag, dirs: ['r-api', 'r-viewer', 'r-loop'] },
-{ id: 'dbt', name: 'ml-research', color: C.pink, glyph: G.layers, dirs: ['d-vista'] },
+{ id: 'dbt', name: 'ml-research', color: C.pink, glyph: G.layers, dirs: ['d-hpc'] },
 { id: 'alpha', name: 'paper', color: C.purple, glyph: G.sun, dirs: ['a-dir'] }
 ];
 // What New directory… finds on each machine, folder by folder ("~/" is home).
 const FS = {
 local: { '/': ['Applications', 'Library', 'System', 'Users', 'opt', 'tmp'], '~/': ['.claude', 'Desktop', 'Documents', 'Downloads', 'code', 'writing'], '~/code/': ['herdr-config', 'web-app'], '~/code/web-app/': ['api', 'frontend'], '~/writing/': ['paper'] },
-a5k: { '/': ['home', 'mnt', 'opt', 'tmp', 'usr'], '/mnt/': ['data', 'nas'], '/mnt/nas/': ['datasets', 'projects', 'shared'], '~/': ['.cache', 'datasets', 'load-tests'] },
-'2a5k': { '/': ['home', 'mnt', 'opt', 'tmp', 'usr'], '/mnt/': ['nas'], '~/': ['.cache', 'load-tests'], '~/load-tests/': ['configs', 'runs'] },
-'4vita2': { '/': ['home', 'mnt', 'tmp'], '/mnt/': ['nas'], '~/': ['.cache', 'experiments'] },
-'4vita5': { '/': ['home', 'mnt', 'tmp'], '/mnt/': ['nas'], '~/': ['.cache', 'experiments'] },
-vista: { '/': ['home1', 'scratch', 'work'], '~/': ['.cache', 'experiments', 'train'] }
+gpu1: { '/': ['home', 'mnt', 'opt', 'tmp', 'usr'], '/mnt/': ['data', 'nas'], '/mnt/nas/': ['datasets', 'projects', 'shared'], '~/': ['.cache', 'datasets', 'load-tests'] },
+'gpu2': { '/': ['home', 'mnt', 'opt', 'tmp', 'usr'], '/mnt/': ['nas'], '~/': ['.cache', 'load-tests'], '~/load-tests/': ['configs', 'runs'] },
+'lab1': { '/': ['home', 'mnt', 'tmp'], '/mnt/': ['nas'], '~/': ['.cache', 'experiments'] },
+'lab2': { '/': ['home', 'mnt', 'tmp'], '/mnt/': ['nas'], '~/': ['.cache', 'experiments'] },
+hpc: { '/': ['home1', 'scratch', 'work'], '~/': ['.cache', 'experiments', 'train'] }
 };
-this._data = { dirs: dirs, projects: projects, G: G, FS: FS, machines: [null, 'a5k', '2a5k', '4vita2', '4vita5', 'vista'] };
+this._data = { dirs: dirs, projects: projects, G: G, FS: FS, machines: [null, 'gpu1', 'gpu2', 'lab1', 'lab2', 'hpc'] };
 return this._data;
 }
 
@@ -562,7 +562,7 @@ if (!name) return;
 this.setState({ nd: { ...nd, path: this.typed(nd.path).parent + name + '/', sel: 0, error: '' } });
 }
 // Enter or Create: the path as typed joins the project (its pill shows at once) and a new tab
-// starts Claude in it; on vista a terminal instead (Claude can't run on its login node).
+// starts Claude in it; on hpc a terminal instead (Claude can't run on its login node).
 ndCreate() {
 const s = this.state, nd = s.nd;
 if (!nd) return;
@@ -577,12 +577,12 @@ const P = this.data().projects.find((x) => x.id === nd.project);
 const used = [P.color].concat(mine.map((id) => D[id].color));
 const C = ['#5b8def', '#e3814f', '#3fae6a', '#d9649a', '#8b7cf6', '#22a99a'];
 const base = path === '~' ? '~' : path.split('/').pop();
-const vista = nd.machine === 'vista', pane = 'np' + n, tab = 'nt' + n;
+const hpc = nd.machine === 'hpc', pane = 'np' + n, tab = 'nt' + n;
 this.setState({
 nd: null, n: n,
 extraDirs: known ? s.extraDirs : { ...s.extraDirs, [dirId]: { project: nd.project, machine: nd.machine || null, path: path, base: base, color: C.find((c) => used.indexOf(c) < 0) || C[0] } },
 projDirs: known ? s.projDirs : { ...s.projDirs, [nd.project]: (s.projDirs[nd.project] || []).concat(dirId) },
-panes: { ...s.panes, [pane]: vista ? { name: 'bash', agent: false, status: null, dir: dirId, since: '' } : { name: base, agent: true, status: 'idle', dir: dirId, since: '<1m' } },
+panes: { ...s.panes, [pane]: hpc ? { name: 'bash', agent: false, status: null, dir: dirId, since: '' } : { name: base, agent: true, status: 'idle', dir: dirId, since: '<1m' } },
 tabs: s.tabs.concat({ id: tab, panes: [pane], dir: 'row', focus: pane }),
 project: nd.project, active: { ...s.active, [nd.project]: tab },
 expanded: { ...s.expanded, [nd.project]: true }, pill: { ...s.pill, [nd.project]: dirId },
@@ -807,7 +807,7 @@ pick: () => this.setState({ nd: { ...this.state.nd, machine: m, sel: 0, error: '
 ndList: sug.list.map((name, i) => ({ name: name + '/', cls: i === ndSel ? 'on' : '', on: i === ndSel, selected: i === ndSel ? 'true' : 'false', take: () => this.ndTake(i) })),
 ndNone: Boolean(nd) && sug.list.length === 0,
 ndNoneText: sug.missing || sug.prefix ? 'Not there yet: Create makes it.' : 'No folders in it.',
-ndHint: nd && nd.error ? nd.error : nd && nd.machine === 'vista' ? 'Made if it isn\'t there and added to ' + ndName + '. A terminal opens in it: Claude can\'t run on vista\'s login node.' : 'Made if it isn\'t there, added to ' + ndName + ', and Claude starts in it.',
+ndHint: nd && nd.error ? nd.error : nd && nd.machine === 'hpc' ? 'Made if it isn\'t there and added to ' + ndName + '. A terminal opens in it: Claude can\'t run on hpc\'s login node.' : 'Made if it isn\'t there, added to ' + ndName + ', and Claude starts in it.',
 ndHintInk: nd && nd.error ? '#ff6b6b' : '#8b8c93',
 ndInput: (e) => this.setState({ nd: { ...this.state.nd, path: e.target.value, sel: 0, error: '' } }),
 // The input's own keys: Tab takes the highlighted folder, ↑ ↓ move it, Enter creates, Esc closes.
@@ -886,7 +886,7 @@ run: (e) => { e.stopPropagation(); if (it.run) it.run(); else this.setState({ me
 </div>
 <ul style="margin: 0; padding-left: 18px; color: #c9cace">
 <li>Drag a tab onto another to split them (hold ⌥ to stack). Drag a name out of a split tab to undo it.</li>
-<li>Click a project's <b>+</b>, pick a5k, type <code>/mn</code>, press Tab.</li>
+<li>Click a project's <b>+</b>, pick gpu1, type <code>/mn</code>, press Tab.</li>
 <li>Click a project's row to fold it. Click in the left panel, then press ⌥1–⌥4.</li>
 <li>Right-click a tab, a pane or a project.</li>
 </ul>

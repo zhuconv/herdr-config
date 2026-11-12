@@ -50,10 +50,10 @@ Every file it replaces is backed up to `~/.config/herdr-app.backup-<time>/` firs
 Claude sessions that run in a remote machine's Herdr terminal can fill the ⌃Tab cards and report working or idle too, once that machine has the hook (it needs `python3` there):
 
 ```sh
-./install.sh --remote a5k      # machine names come from `hc machine ls`
+./install.sh --remote <machine>      # a name from `hc machine ls`; once per machine
 ```
 
-Installed on a5k, 2a5k, 4vita2, 4vita5 and vista. On vista, Claude runs on a compute node, and the hook passes its labels to the login node over ssh (`$HC_VIA`, or Slurm's `$SLURM_SUBMIT_HOST` in an idev session).
+On a Slurm cluster, where Claude runs on a compute node, the hook passes its labels to the login node over ssh (`$HC_VIA`, or Slurm's `$SLURM_SUBMIT_HOST` in an idev session).
 
 ## After changing the config
 
@@ -86,7 +86,7 @@ git pull && ./install.sh
 | `claude/agent-note` | The Claude Code hook. It keeps the start of your last prompt and the end of the reply for the ⌃Tab cards, and sets `note.state` (working or idle) for background sessions, which report no state to Herdr. `install.sh` adds it to `~/.claude/settings.json` |
 | `raycast/` | The Raycast script for ⌘G in any app. `postkey.c` keeps ⌘G as Find Next in VS Code |
 | `install.sh`, `save.sh`, `paths.sh` | Install, save back, and the list of what's synced |
-| `docs/` | The clickable mock (served by GitHub Pages) and the screenshot. `make-demo.py` builds `index.html` from the design canvas's file, with sample names; `support.js` plays it with [Preact](https://preactjs.com) |
+| `docs/` | The clickable mock (served by GitHub Pages) and the screenshot. `index.html` is the design canvas's file with sample names; `support.js` plays it with [Preact](https://preactjs.com) |
 
 Not synced: the state Herdr writes itself (`shared.json`, `view.json`, `data/`, …) and hc's machines (add them on a new Mac with `hc machine add`).
 
