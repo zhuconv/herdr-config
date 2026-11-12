@@ -5,7 +5,7 @@ import { spaces, panes, run, openOverlay, theme, window, shared, layout, setting
 import { Reopener } from "./reopen.js";
 import { Waiting } from "./waiting.js";
 import { Recent } from "./recent.js";
-import { tabsOf, agentKeys, tabProject, tabGroups, nthTab, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
+import { tabsOf, agentKeys, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
@@ -59,6 +59,7 @@ export default class Tabs extends View {
     this.published = undefined; // the project last said to be shown
     this.view = []; // the groups as drawn: data, for the wheel and drags
     this.nums = new Map(); // each tab's number, as drawn
+    this.lastShown = null; // the shown tab, its project and the bar's tab ids, as drawn
     // A drag: a tab ({ kind: "tab", id }) or one pane of a split ({ kind: "pane", id, pane,
     // terminal }), pressed at x, y; it counts once the pointer has gone 5 px.
     this.drag = null;
@@ -108,15 +109,24 @@ export default class Tabs extends View {
   }
 
   // Focus moved: note when (a project picked in the left panel shows until then), and keep the
-  // pane as its project's last-used one. True when it moved.
+  // pane as its project's last-used one. True when it moved. If it moved because the shown tab
+  // went away (⌘W, its ×, a menu, its shell exited) and Herdr showed another project's tab (the
+  // next one in the space), the bar's neighbour is shown instead (projects.js replacement).
   track() {
     const f = focused(), pane = f?.pane ?? null;
     if (pane === this.focusPane) return false;
     this.focusPane = pane;
     this.focusAt = Date.now();
-    const tab = pane ? allTabs().find((t) => t.id === f.tab) : null;
+    const tabs = allTabs(), st = projectState();
+    const tab = pane ? tabs.find((t) => t.id === f.tab) : null;
+    const was = this.lastShown;
+    if (was && tab && (tabProject(tab, st) ?? null) !== was.project) {
+      const id = replacement(was, new Set(tabs.map((t) => t.id)));
+      const to = id ? tabs.find((t) => t.id === id) : null;
+      if (to) { this.lastShown = null; select(to); return true; }
+    }
     if (tab) {
-      const key = tabProject(tab, projectState()) ?? UNSORTED, last = shared(LAST) ?? {};
+      const key = tabProject(tab, st) ?? UNSORTED, last = shared(LAST) ?? {};
       if (last[key] !== pane) setShared(LAST, { ...last, [key]: pane });
     }
     return true;
@@ -464,6 +474,9 @@ export default class Tabs extends View {
     // Every tab's number, folded groups' too (nthTab counts the same way).
     this.nums = new Map(groups.flatMap((g) => g.tabs).map((x, i) => [x.id, i + 1]));
     const active = focused()?.tab ?? null;
+    // What the bar shows, for track(): if this tab goes away, its neighbour here follows.
+    const ids = groups.flatMap((g) => g.tabs).map((x) => x.id);
+    this.lastShown = active && ids.includes(active) ? { tab: active, project, list: ids } : null;
     const flat = groups.filter((g) => g.tabs.length === 1 || !this.folded.has(g.key)).flatMap((g) => g.tabs);
     const to = this.drag?.moved ? this.target() : null;
     const root = layout(), sidebar = find(root, "sidebar"), w = window();

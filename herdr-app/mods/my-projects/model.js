@@ -336,6 +336,17 @@ export function landing(groups, last) {
   return (tabs.find((t) => t.panes.some((p) => p.agent)) ?? tabs[0])?.listed[0]?.pane ?? null;
 }
 
+// The shown tab went away (closed by any means, or its shell exited) and Herdr showed the next
+// tab of its space, maybe another project's: the bar's neighbour instead, the next tab still
+// there, else the one before, as a browser does. shown: { tab, list } as the bar last drew it;
+// alive: the tab ids there now. Null while it's there, or when its project has none left.
+export function replacement(shown, alive) {
+  if (!shown || alive.has(shown.tab)) return null;
+  const i = shown.list.indexOf(shown.tab);
+  if (i < 0) return null;
+  return [...shown.list.slice(i + 1), ...shown.list.slice(0, i).reverse()].find((id) => alive.has(id)) ?? null;
+}
+
 // ⌘1–⌘8 pick that tab of the bar and ⌘9 the last, as in a browser. Folding a group doesn't
 // renumber the tabs after it: its own still count.
 export function nthTab(groups, n) {
