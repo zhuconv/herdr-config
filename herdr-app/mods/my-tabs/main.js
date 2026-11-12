@@ -6,6 +6,7 @@ import { Reopener } from "./reopen.js";
 import { Waiting } from "./waiting.js";
 import { Recent } from "./recent.js";
 import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
+import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
@@ -37,6 +38,18 @@ const faint = (c, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(c ?? "") ? c + alp
 const allTabs = () => tabsOf(spaces(), panes(), agents(), agentKeys(shared("new-menu.agents")),
   new Map(terminals().map((x) => [x.address, x.labels])));
 const select = (tab) => { run("space.select", { id: tab.space }); run("tab.select", { id: tab.id }); };
+
+// One call to herdr-core's API (JSON-RPC, a line each, over `hc connect`; exec has no stdin, so
+// sh pipes the two lines in). The reply, or null.
+async function coreCall(method, params) {
+  const line = (id, m, p) => JSON.stringify({ jsonrpc: "2.0", id, method: m, params: p });
+  const r = await exec("/bin/sh", ["-c", 'H=$(command -v hc) || H="$HOME/.local/bin/hc"; printf "%s\\n%s\\n" "$1" "$2" | "$H" connect',
+    "sh", line(1, "hello", {}), line(2, method, params)], { timeout: 20000 });
+  for (const l of r.stdout.split("\n")) {
+    try { const m = JSON.parse(l); if (m?.id === 2) return m; } catch {}
+  }
+  return null;
+}
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -350,10 +363,70 @@ export default class Tabs extends View {
     return panes().some((p) => p.terminal === terminal) === want;
   }
 
-  // A tab's terminals (or one pane's) join another tab as splits beside its first pane (⌥: below
-  // it): that tab gets shown and focused, then each terminal is parked (its pane goes, it keeps
-  // running) and given a pane there. The tab they left goes with its last pane.
+  // A tab (or one pane of a split) joins another tab: on its right (⌥: below its first pane).
+  // The screen goes straight to the split (mergeByDoc); if that can't be done, Herdr's commands
+  // do it in steps (mergeByKeep), and the tab shows alone for a moment first.
   async merge(cx, d, dst) {
+    if (this.merging) return;
+    this.merging = true;
+    try {
+      if (!(await this.mergeByDoc(cx, d, dst))) await this.mergeByKeep(cx, d, dst);
+    } catch (err) {
+      console.log("my-tabs merge", String(err?.stack ?? err));
+    } finally {
+      this.merging = false;
+      cx.notify();
+    }
+  }
+
+  // In one write to the machine's layout (layoutdoc.js): the panes move and the screen shows the
+  // result at once. If the tab being moved is the one on screen, it stays on screen and turns
+  // into the split, taking the other's place in the bar (so nothing else shows in between).
+  // Else the result is shown once it's there. False when nothing was written.
+  async mergeByDoc(cx, d, dst) {
+    const tabs = allTabs(), src = tabs.find((t) => t.id === d.id), to = tabs.find((t) => t.id === dst.id);
+    if (!src || !to || src.id === to.id) return false;
+    const machine = spaces().find((s) => s.id === to.space)?.machine ?? null;
+    const on = machine ? { on: machine } : {}, full = (id) => (machine ? `${machine}/${id}` : id);
+    const shown = focused()?.tab ?? null;
+    const keep = shown === src.id && src.space === to.space ? "src" : "dst";
+    let plan = null;
+    for (let i = 0; i < 3 && !plan; i++) {
+      const got = (await coreCall("doc.get", { name: "herdr-app", ...on }))?.result;
+      if (!got) return false;
+      const p = mergeLayout(got.value, { src: localId(src.id), dst: localId(to.id), terminal: d.kind === "pane" ? localId(d.terminal) : null,
+        mode: d.alt ? "down" : "right", keep });
+      if (!p) return false;
+      // The tab on screen leaving for another space: show the other first, as the steps would.
+      if (i === 0 && shown === src.id && keep === "dst") select(to);
+      const set = await coreCall("doc.set", { name: "herdr-app", value: p.doc, version: got.version, ...on });
+      if (set?.result) plan = p;
+      else if (set?.error?.data?.kind !== "conflict") return false; // conflict: read again
+    }
+    if (!plan) return false;
+    // A terminal's herdr.space / herdr.tab labels say where it shows when it has no pane: they
+    // follow it, as Herdr's own moves do.
+    await Promise.all(plan.moved.map((m) => hc(["label", full(m.terminal), `herdr.space=${m.space}`, `herdr.tab=${m.tab}`]).catch(() => null)));
+    // Until Herdr has it (up to 5 s).
+    const want = plan.moved.map((m) => [full(m.terminal), full(m.tab)]);
+    for (let i = 0; i < 100 && !want.every(([t, tab]) => panes().find((p) => p.terminal === t)?.tab === tab); i++) await cx.sleep(50);
+    if (keep === "src") setShared(ORDER, swapOrder(shared(ORDER) ?? [], src.id, to.id, !plan.gone));
+    // Focus the moved one (for a whole tab, the one it's named after); showing it if it isn't.
+    const first = d.kind === "pane" ? d.terminal : src.listed.find((p) => p.terminal)?.terminal ?? src.panes.find((p) => p.terminal)?.terminal;
+    if (!(keep === "src" && d.kind === "tab")) {
+      if (first) run("pane.focus", { terminal: first });
+      else select(to);
+    }
+    // A zoomed pane there would hide the newcomer.
+    const zoomed = panes().find((p) => p.tab === full(plan.container) && p.zoomed);
+    if (zoomed) run("pane.zoom", { pane: zoomed.pane });
+    return true;
+  }
+
+  // The same in steps, with Herdr's commands: the target tab is shown and focused, then each
+  // terminal is parked (its pane goes, it keeps running) and given a pane beside the focused one.
+  // The tab they left goes with its last pane.
+  async mergeByKeep(cx, d, dst) {
     const src = allTabs().find((t) => t.id === d.id);
     const moving = d.kind === "pane" ? [d.terminal] : (src?.panes ?? []).map((p) => p.terminal).filter(Boolean);
     const anchor = [...dst.listed, ...dst.panes].find((p) => p.terminal)?.pane;
