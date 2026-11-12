@@ -366,7 +366,7 @@ export default class Projects extends View {
       .on_click(() => openNew()).child(svg(chrome("plus")).size(14));
   }
 
-  // A group's row: icon, name, (folded: its loudest state), count, chevron. A press on a
+  // A group's row: icon, name, (folded: its loudest state), chevron. A press on a
   // project's row starts a drag (see project()); a click folds it.
   head(t, h) {
     const logo = div().id(`icon-${h.id}`).size(24).flex_none().rounded(6).flex().items_center().justify_center().child(h.tile)
@@ -391,7 +391,6 @@ export default class Projects extends View {
       .child(logo)
       .child(div().flex_1().min_w(0).truncate().font_medium().text_color(h.dim ? t.muted : t.foreground).child(h.name))
       .when(h.closed && Boolean(h.status), (el) => el.child(mark(t, h.status)))
-      .child(div().w(16).flex_none().text_center().text_size(11).text_color(t.dim).child(String(h.count)))
       .child(fold);
   }
 
@@ -404,7 +403,7 @@ export default class Projects extends View {
       .when(o.lifted, (el) => el.opacity(0.35))
       .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(o.tooltip)
       .on_mouse_down("left", (e) => this.press({ kind: "dir", key: o.key, from: o.group, grab: e.local_position ?? { x: 12, y: 11 },
-        look: { machine: o.machine, label: o.label, detail: o.detail, count: o.count, color: o.color } }, e))
+        look: { machine: o.machine, label: o.label, detail: o.detail, color: o.color } }, e))
       .on_mouse_move((e) => {
         if (this.drag?.kind === "dir") this.hitPill = { key: o.key, after: e.local_position.x > (e.bounds?.width ?? 0) / 2, box: e.bounds };
       })
@@ -413,7 +412,8 @@ export default class Projects extends View {
       .children(this.pillParts(t, o));
   }
 
-  // What a pill shows: machine, directory name, (folded: its loudest state), count.
+  // What a pill shows: machine, directory name, (folded: its loudest state). No counts: the
+  // user had them taken off, here and on the project rows.
   pillParts(t, o) {
     return [
       // The directory's color, the one its group of tabs has in the tab bar.
@@ -422,7 +422,6 @@ export default class Projects extends View {
       div().flex_none().text_size(11.5).text_color(o.dim ? t.muted : t.foreground).child(o.label),
       div().min_w(0).max_w(104).truncate().text_size(11.5).text_color(t.muted).child(o.detail),
       ...(o.status ? [mark(t, o.status)] : []),
-      div().flex_none().text_size(11).text_color(t.muted).child(o.count),
     ];
   }
 
@@ -480,7 +479,7 @@ export default class Projects extends View {
   project(t, p, ring, now) {
     const closed = this.closed.has(p.key);
     const head = this.head(t, {
-      id: hash(p.key), name: p.label ?? p.name, count: p.convs.length, closed, dim: !p.convs.length,
+      id: hash(p.key), name: p.label ?? p.name, closed, dim: !p.convs.length,
       tile: p.icon ? tile(p.icon) : plainTile(t, icon("inbox")),
       status: loud(urgent(p.convs.map((c) => c.status))),
       toggle: () => (closed ? this.closed.delete(p.key) : this.closed.add(p.key)),
@@ -511,7 +510,7 @@ export default class Projects extends View {
       head,
       h_flex().flex_none().flex_wrap().gap(5).pl(35).pb(6).children(p.pills.map((pl) => this.pill(t, `pill-${hash(p.key + "\u0000" + pl.key)}`, ring, {
         key: pl.key, group: p.key, lifted: d?.kind === "dir" && d.moved && d.key === pl.key && d.from === p.key,
-        machine: pl.machine, label: pl.label, detail: pl.detail, count: String(pl.convs.length), dim: !pl.convs.length,
+        machine: pl.machine, label: pl.label, detail: pl.detail, dim: !pl.convs.length,
         color: (shared(DIRCOLORS) ?? {})[pl.key] ?? null,
         open: pl === shown, here: pl.convs.some((c) => c.focused),
         status: pl === shown ? null : loud(urgent(pl.convs.map((c) => c.status))),
