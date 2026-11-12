@@ -22,7 +22,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -181,6 +181,12 @@ function addDirTo(key, to) {
 
 // Makes a directory (with its parents) and prints where it is: "~/x", "x" (from home) or "/x".
 const MKDIR = 'p=$1\ncase $p in "~") p=$HOME ;; "~/"*) p=$HOME/${p#"~/"} ;; /*) ;; *) p=$HOME/$p ;; esac\nmkdir -p -- "$p" && cd "$p" && pwd -P';
+// Lists the folders in a typed folder ("" is home): one per line with a "/" after it, or "?"
+// when the folder isn't there. For the New directory dialog's suggestions.
+const LIST = 'p=$1\ncase $p in "" | "~") p=$HOME ;; "~/"*) p=$HOME/${p#"~/"} ;; /*) ;; *) p=$HOME/$p ;; esac\ncd "$p" 2>/dev/null || { echo "?"; exit 0; }\nls -1ApL 2>/dev/null | grep "/$" | head -2000';
+const LOADING = "loading", MISSING = "missing", FAILED = "failed";
+const SUGGEST = 6; // suggestions shown
+const NEWDIR_KEYS = "MyProjectsNewDir"; // the dialog's key context: its Tab, ↑ and ↓
 
 // Picking a project (null: Unsorted) shows its tabs in the tab bar: its last-used pane gets
 // focus, else its first tab's; with no tabs, the bar shows it empty until focus moves.
@@ -209,9 +215,10 @@ const openProject = (project) => popup({ role: "project", project }, 212, 10 + 3
 const openBlank = () => popup({ role: "blank" }, 200, 10 + 30 + 9 + 30 + 30);
 const openNew = (dir = null) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "new", dir } });
 const openRename = (project) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "rename", project } });
-// The New directory dialog: a row of machines (about six fit; more wrap onto another row).
+// The New directory dialog: a row of machines (about six fit; more wrap onto another row) and
+// room for SUGGEST path suggestions.
 const openNewDir = (project) => openOverlay({ mod: MOD, kind: "dialog", width: 420,
-  height: 288 + 32 * (Math.ceil((1 + (shared(MACHINES) ?? []).length) / 6) - 1), props: { role: "newdir", project } });
+  height: 296 + SUGGEST * 26 + 32 * (Math.ceil((1 + (shared(MACHINES) ?? []).length) / 6) - 1), props: { role: "newdir", project } });
 // Deleting goes through Herdr's own confirm dialog, which runs "my-projects.delete <name>".
 function askDelete(name) {
   const n = projectsNow().projects.find((p) => p.name === name)?.pills.length ?? 0;
@@ -672,11 +679,26 @@ class Popup {
       this.on = first ? splitDir(first).machine : null;
       this.connected = null;
       this.busy = false;
+      // Path suggestions: each typed folder's folders, by "machine|folder" (or LOADING,
+      // MISSING, FAILED), and which one is highlighted (Tab takes it).
+      this.dirs = new Map();
+      this.sel = 0;
       this.input = InputState.new({ placeholder: "~/new-directory" });
-      this.input.on("change", (_e, cx) => { this.error = null; cx.notify(); });
+      this.input.on("change", (_e, cx) => { this.error = null; this.sel = 0; this.refresh(cx); cx.notify(); });
+      // Enter: the path as typed, suggestions or not.
       this.input.on("submit", (_e, cx) => this.makeDir(cx));
       this.input.focus();
       cx.timer.after(600, () => this.input.focus());
+      // Tab, ↑ and ↓ are the dialog's own (key_context in newDirView): a binding deeper in than
+      // the app's comes first, as in win98's menu.
+      try {
+        cx.bind_keys([
+          { keystroke: "tab", action: "my_projects_complete", context: NEWDIR_KEYS },
+          { keystroke: "down", action: "my_projects_next", context: NEWDIR_KEYS },
+          { keystroke: "up", action: "my_projects_prev", context: NEWDIR_KEYS },
+        ]);
+      } catch {}
+      this.refresh(cx);
       cx.spawn(async (cx) => {
         try {
           const r = await hc(["machine", "ls", "--json"]);
@@ -692,7 +714,8 @@ class Popup {
 
   // New directory…: makes it on the picked machine (or finds it there), adds it to the
   // project, and starts Claude in it (a terminal on Vista). A failure stays in the dialog.
-  async makeDir(cx) {
+  // The wait is a task of its own: a handler's cx is gone after an await.
+  makeDir(cx) {
     const p = props(), raw = this.input.value().trim(), on = this.on;
     if (this.busy) return;
     if (!raw) { this.error = "Type the directory's path."; cx.notify(); return; }
@@ -700,19 +723,74 @@ class Popup {
       this.error = `${on} isn't connected: run hc machine login ${on} in a terminal.`; cx.notify(); return;
     }
     this.busy = true; this.error = null; cx.notify();
-    let r = null;
-    try { r = await exec("/bin/sh", ["-c", MKDIR, "sh", raw], { on, timeout: 20000 }); } catch {}
-    this.busy = false;
-    if (this.gone) return; // closed meanwhile: it stays out of the project, nothing starts
-    const path = r?.code === 0 ? r.stdout.trim().split("\n").pop() : "";
-    if (!path.startsWith("/")) {
-      this.error = r ? r.stderr.trim().split("\n")[0] || "Couldn't make it." : `Couldn't reach ${on ?? "this computer"}.`;
+    cx.spawn(async (cx) => {
+      let r = null;
+      try { r = await exec("/bin/sh", ["-c", MKDIR, "sh", raw], { on, timeout: 20000 }); } catch {}
+      this.busy = false;
+      if (this.gone) return; // closed meanwhile: it stays out of the project, nothing starts
+      const path = r?.code === 0 ? r.stdout.trim().split("\n").pop() : "";
+      if (!path.startsWith("/")) {
+        this.error = r ? r.stderr.trim().split("\n")[0] || "Couldn't make it." : `Couldn't reach ${on ?? "this computer"}.`;
+        cx.notify();
+        return;
+      }
+      addDirTo(dirKey(on, path), p.project);
+      openIn(on, path);
+      closeOverlay(p.overlay);
+    });
+  }
+
+  // The typed path's folder on the picked machine ("machine|folder as typed").
+  listKey() { return `${this.on ?? ""}|${splitTyped(this.input.value()).parent}`; }
+
+  // Lists the typed path's folder on the picked machine, once per folder and machine.
+  refresh(cx) {
+    const on = this.on, { parent } = splitTyped(this.input.value()), key = this.listKey();
+    if (this.dirs.has(key)) return;
+    this.dirs.set(key, LOADING);
+    cx.spawn(async (cx) => {
+      let r = null;
+      try { r = await exec("/bin/sh", ["-c", LIST, "sh", parent], { on, timeout: 15000 }); } catch {}
+      const lines = (r?.stdout ?? "").split("\n").filter(Boolean);
+      this.dirs.set(key, !r ? FAILED : lines[0] === "?" ? MISSING : lines.map((l) => l.replace(/\/$/, "")));
       cx.notify();
-      return;
-    }
-    addDirTo(dirKey(on, path), p.project);
-    openIn(on, path);
-    closeOverlay(p.overlay);
+    });
+  }
+
+  // The folders there that start with the name being typed (model.js matchDirs).
+  suggestions() {
+    const got = this.dirs.get(this.listKey());
+    return Array.isArray(got) ? matchDirs(got, splitTyped(this.input.value()).prefix, SUGGEST) : [];
+  }
+
+  // Tab, or a click on a suggestion: the highlighted folder replaces the name being typed, with
+  // a "/" after it, so its own folders come up next. Nothing to take: Tab does nothing.
+  complete(cx) {
+    const list = this.suggestions(), name = list[Math.min(this.sel, list.length - 1)];
+    if (!name) return;
+    const next = completeWith(this.input.value(), name);
+    this.input.set_value(next);
+    this.input.set_selected_range({ start: next.length, end: next.length });
+    this.input.focus();
+    this.sel = 0;
+    this.error = null;
+    this.refresh(cx);
+    cx.notify();
+  }
+
+  // ↑ / ↓: the highlight moves through the suggestions.
+  step(cx, d) {
+    const n = this.suggestions().length;
+    if (n) { this.sel = (Math.min(this.sel, n - 1) + d + n) % n; cx.notify(); }
+  }
+
+  // What the suggestion list says when it has none.
+  emptyText() {
+    const got = this.dirs.get(this.listKey()), { prefix } = splitTyped(this.input.value());
+    if (got === undefined || got === LOADING) return "Looking…";
+    if (got === FAILED) return `Couldn't look on ${this.on ?? "this computer"}.`;
+    if (got === MISSING || prefix) return "Not there yet: Create makes it.";
+    return "No folders in it.";
   }
 
   submit(cx) {
@@ -821,7 +899,8 @@ class Popup {
   }
 
   // The New directory dialog: which machine (this computer and the connected ones, as chips),
-  // the path there, and what will happen.
+  // the path there with the folders it could go on to (Tab takes the highlighted one), and what
+  // will happen.
   newDirView(t, p) {
     const names = [...new Set([...(this.connected ?? shared(MACHINES) ?? []), ...(this.on ? [this.on] : [])])];
     const chip = (m) => {
@@ -829,7 +908,7 @@ class Popup {
       return div().id(`nd-${m ?? "local"}`).h(26).px(10).flex().flex_none().items_center().rounded(13).border_1()
         .border_color(on ? ringColor(t) : t.input).bg(on ? t.selected : t.raised).text_size(12)
         .text_color(on ? t.foreground : t.muted).cursor_pointer().when(!on, (el) => el.hover((s) => s.bg(t.hover)))
-        .on_click((_e, cx) => { this.on = m; this.error = null; this.input.focus(); cx.notify(); })
+        .on_click((_e, cx) => { this.on = m; this.error = null; this.sel = 0; this.refresh(cx); this.input.focus(); cx.notify(); })
         .child(m ?? "local");
     };
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
@@ -840,7 +919,18 @@ class Popup {
     const hint = agentsRunOn(this.on) ? `Made if it isn't there, added to ${p.project}, and Claude starts in it.`
       : `Made if it isn't there and added to ${p.project}. A terminal opens in it: Claude can't run on ${this.on}'s login node.`;
     const leave = () => { this.gone = true; closeOverlay(p.overlay); };
-    return v_flex().id("new-dir").track_focus(this.handle).on_key_down((e, cx) => { if (e.key === "escape") this.gone = true; esc(e, cx); }).w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
+    const list = this.suggestions(), sel = Math.min(this.sel, Math.max(0, list.length - 1));
+    const row = (name, i) => h_flex().id(`nd-sg-${i}`).h(26).flex_none().px(10).gap(8).items_center().rounded(6)
+      .when(i === sel, (el) => el.bg(t.selected)).when(i !== sel, (el) => el.hover((s) => s.bg(t.hover)))
+      .cursor_pointer().on_click((_e, cx) => { this.sel = i; this.complete(cx); })
+      .child(svg(chrome("folder")).size(13).flex_none().text_color(t.dim))
+      .child(div().flex_1().min_w(0).truncate().text_size(12.5).text_color(t.foreground).child(`${name}/`))
+      .when(i === sel, (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child("Tab")));
+    return v_flex().id("new-dir").track_focus(this.handle).key_context(NEWDIR_KEYS)
+      .on_action("my_projects_complete", (_e, cx) => this.complete(cx))
+      .on_action("my_projects_next", (_e, cx) => this.step(cx, 1))
+      .on_action("my_projects_prev", (_e, cx) => this.step(cx, -1))
+      .on_key_down((e, cx) => { if (e.key === "escape") this.gone = true; esc(e, cx); }).w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center().gap(8)
         .child(div().flex_1().min_w(0).truncate().text_size(15).font_semibold().child(`New directory in ${p.project}`))
         .child(div().flex_none().text_size(11).text_color(t.dim).child("Esc")))
@@ -848,6 +938,9 @@ class Popup {
       .child(h_flex().flex_wrap().gap(6).children([null, ...names].map(chip)))
       .child(label("Path"))
       .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(ringColor(t)).bg(t.background).text_size(12.8).text_color(t.foreground))
+      .child(v_flex().id("nd-list").mt(6).h(SUGGEST * 26).flex_none().overflow_hidden()
+        .when(list.length > 0, (el) => el.children(list.map(row)))
+        .when(!list.length, (el) => el.child(div().px(10).pt(5).text_size(12).text_color(t.dim).child(this.emptyText()))))
       .child(div().pt(6).text_size(11.5).text_color(this.error ? t.blocked : t.dim).child(this.error ?? hint))
       .child(h_flex().pt(18).gap(8).justify_end()
         .child(button("nd-cancel", "Cancel", false, leave))

@@ -133,6 +133,23 @@ export function addDir(state, key, to) {
 export const LOGIN_NODES = ["vista"];
 export const agentsRunOn = (machine) => !LOGIN_NODES.includes(machine ?? "");
 
+// New directory…'s path suggestions. The typed path as the folder it's in (as typed, up to its
+// last /; "" is home) and the start of a name in it; "~" alone is the inside of home.
+export function splitTyped(raw) {
+  const s = raw === "~" ? "~/" : String(raw ?? "");
+  const i = s.lastIndexOf("/");
+  return i < 0 ? { parent: "", prefix: s } : { parent: s.slice(0, i + 1), prefix: s.slice(i + 1) };
+}
+// The folder names starting with prefix, in any case but its own first, then by name; hidden
+// ones only once the prefix starts with ".".
+export function matchDirs(names, prefix, limit = 6) {
+  const low = prefix.toLowerCase(), hidden = prefix.startsWith(".");
+  return names.filter((n) => (hidden || !n.startsWith(".")) && n.toLowerCase().startsWith(low))
+    .sort((a, b) => b.startsWith(prefix) - a.startsWith(prefix) || byName(a, b)).slice(0, limit);
+}
+// Tab: the name being typed becomes that folder, with a "/" for the next ("/mn" → "/mnt/").
+export const completeWith = (raw, name) => `${splitTyped(raw).parent}${name}/`;
+
 // A new project, empty or with this directory. An existing name gets the directory instead.
 export function addProject(state, name, key = null) {
   if (state.projects.some((p) => p.name === name)) return key ? moveDir(state, key, name) : state;
