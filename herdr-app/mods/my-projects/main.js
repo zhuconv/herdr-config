@@ -238,6 +238,13 @@ export default class Projects extends View {
         // From the blank-area menu (a popup is another copy of this mod: it asks this one).
         else if (verb === "fold-all") { this.closed = new Set([...this.names, UNSORTED]); this.save(); }
         else if (verb === "unfold-all") { this.closed = new Set(); this.save(); }
+        // ⌥1–⌥9 (keys.json "project-1"…"project-9"): the Nth row from the top, as a click on
+        // it; Unsorted, when it shows, is the last row.
+        else if (/^project-[1-9]$/.test(verb)) {
+          const g = projectsNow(), rows = [...g.projects.map((p) => p.name), ...(g.unsorted ? [null] : [])];
+          const n = Number(verb.slice(8));
+          if (n <= rows.length) pickProject(rows[n - 1]);
+        }
         cx.notify();
       }
     });

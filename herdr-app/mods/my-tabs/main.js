@@ -56,6 +56,7 @@ export default class Tabs extends View {
     this.focusAt = Date.now();
     this.published = undefined; // the project last said to be shown
     this.view = []; // the groups as drawn: data, for the wheel and drags
+    this.nums = new Map(); // each tab's number, as drawn
     // A drag: a tab ({ kind: "tab", id }) or one pane of a split ({ kind: "pane", id, pane,
     // terminal }), pressed at x, y; it counts once the pointer has gone 5 px.
     this.drag = null;
@@ -355,7 +356,9 @@ export default class Tabs extends View {
       .when(Boolean(m), (el) => el.child(m));
   }
 
-  // A tab: only its own background says it's the shown one. It always keeps room for its close
+  // A tab: its number first (⌘1–⌘8 pick that one, ⌘9 the last: one number per tab, a split's
+  // too, counted left to right with folded groups keeping theirs), one step dimmer than its
+  // name. Only its own background says it's the shown one. It always keeps room for its close
   // button (shown on the shown tab and under the pointer), so picking a tab changes no width.
   // While a tab is dragged, everything stays gray: the tab it would join turns the hover gray
   // and shows a split icon, a gray line marks where it would move to instead, and another
@@ -364,7 +367,8 @@ export default class Tabs extends View {
     const on = tab.id === active, d = this.drag, to = d?.moved ? this.target() : null;
     const aimed = to && !to.blank && to.tab.id === tab.id ? to.zone : null;
     const lifted = d?.moved && d.id === tab.id && d.kind === "tab";
-    return h_flex().id(`tab-${tab.id}`).relative().h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
+    const num = this.nums.get(tab.id);
+    return h_flex().id(`tab-${tab.id}`).relative().h(29).pl(8).pr(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
       .border(1).border_color(t.chrome).bg(on ? t.raised : t.chrome).text_color(on ? t.foreground : t.muted)
       .when(!on && !d?.moved, (el) => el.hover((s) => s.bg(t.hover)))
       .on_hover((inside, cx) => {
@@ -391,6 +395,8 @@ export default class Tabs extends View {
         const extra = tab.listed.length > 1 ? tab.listed.filter((p) => p.terminal).map((p) => [`Move ${p.name} to new tab`, `my-tabs.split-out ${p.terminal}`]) : [];
         openOverlay({ mod: "my-menu", kind: "popup", width: extra.length ? 260 : 200, props: { tab: "tab", target: { id: tab.id, space: tab.space }, extra } });
       })
+      .when(num != null, (el) => el.child(div().min_w(7).flex_none().flex().justify_center().text_size(11).font_semibold()
+        .text_color(on ? t.muted : t.dim).child(String(num))))
       .children(tab.listed.map((p, i) => this.segment(t, tab, p, i)))
       .child(div().id(`close-${tab.id}`).size(14).flex_none().flex().items_center().justify_center().rounded(4).text_color(t.dim)
         .opacity(on || this.hoverTab === tab.id ? 1 : 0).hover((s) => s.text_color(t.foreground))
@@ -451,6 +457,8 @@ export default class Tabs extends View {
     if (given) setShared(DIRCOLORS, given);
     const colors = given ?? stored;
     this.view = groups;
+    // Every tab's number, folded groups' too (nthTab counts the same way).
+    this.nums = new Map(groups.flatMap((g) => g.tabs).map((x, i) => [x.id, i + 1]));
     const active = focused()?.tab ?? null;
     const flat = groups.filter((g) => !this.folded.has(g.key)).flatMap((g) => g.tabs);
     const to = this.drag?.moved ? this.target() : null;

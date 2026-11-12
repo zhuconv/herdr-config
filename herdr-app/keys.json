@@ -78,7 +78,16 @@
     "cmd-6": "my-tabs.tab-6",
     "cmd-7": "my-tabs.tab-7",
     "cmd-8": "my-tabs.tab-8",
-    "cmd-9": "my-tabs.tab-9"
+    "cmd-9": "my-tabs.tab-9",
+    "alt-1": "my-projects.project-1",
+    "alt-2": "my-projects.project-2",
+    "alt-3": "my-projects.project-3",
+    "alt-4": "my-projects.project-4",
+    "alt-5": "my-projects.project-5",
+    "alt-6": "my-projects.project-6",
+    "alt-7": "my-projects.project-7",
+    "alt-8": "my-projects.project-8",
+    "alt-9": "my-projects.project-9"
   },
   "terminal": {
     "cmd-f": "terminal.search",
