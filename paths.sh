@@ -10,6 +10,8 @@ ITEMS=(
   "herdr-app/mods/my-tabs/|$H/mods/my-tabs/"
   "herdr-app/mods/my-agents/|$H/mods/my-agents/"
   "herdr-app/mods/my-projects/|$H/mods/my-projects/"
+  "herdr-app/mods/my-pane/|$H/mods/my-pane/"
+  "herdr-app/mods/my-menu/|$H/mods/my-menu/"
   "herdr-app/mods/agent-switcher/|$H/mods/agent-switcher/"
   "herdr-app/mods/agent-deck-overview/|$H/mods/agent-deck-overview/"
   "herdr-app/mods/agent-deck-labels/|$H/mods/agent-deck-labels/"

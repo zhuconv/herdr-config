@@ -78,6 +78,9 @@ export default class Tabs extends View {
           else if (c === "switch" || c === "switch-back") this.switchAgent(c === "switch" ? 1 : -1);
           else if (c === "switch-preview") this.switchAgent(1, true);
           else if (/^tab-[1-9]$/.test(c)) this.goTab(Number(c.slice(4)), cx);
+          // "split-out <terminal>": from the pane header's button (mods/my-pane) and the
+          // right-click menus (mods/my-menu).
+          else if (c.startsWith("split-out ")) await this.splitOut(cx, c.slice(10).trim());
         } catch (err) {
           console.log("my-tabs", c, String(err?.stack ?? err));
         }
@@ -218,6 +221,7 @@ export default class Tabs extends View {
     const hit = this.hit, d = this.drag;
     this.hit = null;
     if (!d) return;
+    d.last = { x: e.local_position.x, y: e.local_position.y, w: e.bounds?.width ?? 0, h: e.bounds?.height ?? 0 };
     if (!d.moved && Math.abs(e.position.x - d.x) + Math.abs(e.position.y - d.y) < 5) return;
     d.moved = true;
     d.at = e.local_position;
@@ -252,7 +256,7 @@ export default class Tabs extends View {
     this.drag = null;
     this.over = null;
     if (!d) return;
-    if (to?.blank) cx.spawn(async (cx) => this.unsplit(cx, d));
+    if (to?.blank) cx.spawn(async (cx) => this.splitOut(cx, d.terminal));
     else if (to?.zone === "merge") cx.spawn(async (cx) => this.merge(cx, d, to.tab));
     else if (to?.zone === "before" || to?.zone === "after") {
       const ids = to.group.tabs.map((t) => t.id);
@@ -266,6 +270,16 @@ export default class Tabs extends View {
     this.drag = null;
     this.over = null;
     cx.notify();
+  }
+
+  // The pointer left the bar mid-drag. One name of a split dragged down out of it (the bottom
+  // edge the nearest when it was last seen) moves to a tab of its own at once, the way a browser
+  // tears a tab off: the bar can't hear a release outside it. Any other way out just ends it.
+  leave(cx) {
+    const d = this.drag, l = d?.last;
+    const down = Boolean(l?.h) && l.h - l.y <= Math.min(l.y, l.x, l.w - l.x);
+    this.cancel(cx);
+    if (d?.moved && d.kind === "pane" && down) cx.spawn(async (cx) => this.splitOut(cx, d.terminal));
   }
 
   // Waits (up to 10 s: parking and keeping wait for the terminal's machine) until the terminal
@@ -295,17 +309,18 @@ export default class Tabs extends View {
     cx.notify();
   }
 
-  // One pane of a split becomes a tab of its own, in the same space.
-  async unsplit(cx, d) {
-    const src = allTabs().find((t) => t.id === d.id);
-    if (d.kind !== "pane" || !d.terminal || !src) return;
+  // A pane of a split becomes a tab of its own, in the same space: its terminal is parked (its
+  // pane goes; it keeps running) and kept as a new tab.
+  async splitOut(cx, terminal) {
+    const src = allTabs().find((t) => t.panes.some((p) => p.terminal === terminal));
+    if (!terminal || !src || src.panes.length < 2) return;
     run("space.select", { id: src.space });
-    run("terminal.park", { terminal: d.terminal });
-    if (!(await this.shown(cx, d.terminal, false))) return;
-    run("terminal.keep", { terminal: d.terminal, place: "tab" });
-    if (await this.shown(cx, d.terminal, true)) {
+    run("terminal.park", { terminal });
+    if (!(await this.shown(cx, terminal, false))) return;
+    run("terminal.keep", { terminal, place: "tab" });
+    if (await this.shown(cx, terminal, true)) {
       // A tab made for a kept terminal is named after it ("t2v"): give it Herdr's own name.
-      const tab = panes().find((p) => p.terminal === d.terminal)?.tab;
+      const tab = panes().find((p) => p.terminal === terminal)?.tab;
       if (tab) run("tab.rename", { id: tab, name: "" });
     }
     cx.notify();
@@ -369,7 +384,13 @@ export default class Tabs extends View {
       .on_mouse_move((e) => { if (this.drag) this.hit = { id: tab.id, x: e.local_position.x / (e.bounds?.width || 1) }; })
       // A release that ends a drag isn't a click.
       .on_click(() => { if (!this.drag?.moved) select(tab); })
-      .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: tab.id, space: tab.space } } }); })
+      // Right-click: Herdr's tab menu (mods/my-menu), led by a split's names, each of which can
+      // move to a tab of its own.
+      .on_mouse_down("right", (_e, cx) => {
+        cx.stop_propagation();
+        const extra = tab.listed.length > 1 ? tab.listed.filter((p) => p.terminal).map((p) => [`Move ${p.name} to new tab`, `my-tabs.split-out ${p.terminal}`]) : [];
+        openOverlay({ mod: "my-menu", kind: "popup", width: extra.length ? 260 : 200, props: { tab: "tab", target: { id: tab.id, space: tab.space }, extra } });
+      })
       .children(tab.listed.map((p, i) => this.segment(t, tab, p, i)))
       .child(div().id(`close-${tab.id}`).size(14).flex_none().flex().items_center().justify_center().rounded(4).text_color(t.dim)
         .opacity(on || this.hoverTab === tab.id ? 1 : 0).hover((s) => s.text_color(t.foreground))
@@ -464,7 +485,7 @@ export default class Tabs extends View {
       // Drags. Each tab notes that the pointer is over it (this.hit) before this hears the move.
       .on_mouse_move((e, cx) => this.dragMove(e, cx))
       .on_mouse_up("left", (_e, cx) => this.drop(cx))
-      .on_hover((inside, cx) => { if (!inside) this.cancel(cx); })
+      .on_hover((inside, cx) => { if (!inside) this.leave(cx); })
       // The wheel goes through the shown tabs.
       .on_scroll_wheel(e => {
         if (Math.abs(e.delta.y) < 1 || !flat.length) return;
