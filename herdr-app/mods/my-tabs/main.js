@@ -317,13 +317,30 @@ export default class Tabs extends View {
   }
 
   // The pointer left the bar mid-drag. One name of a split dragged down out of it (the bottom
-  // edge the nearest when it was last seen) moves to a tab of its own at once, the way a browser
-  // tears a tab off: the bar can't hear a release outside it. Any other way out just ends it.
+  // edge the nearest when it was last seen) stays in hand: the bar shows its "New tab" slot, and
+  // the pane moves to a tab of its own when the button comes up, unless the pointer came back
+  // into the bar first. The bar can't hear a release outside it, so herdr-optwatch (my-projects'
+  // helper, mode "up") says when it happened. Without the helper the pane moves at once, the way
+  // a browser tears a tab off. Any other way out just ends the drag.
   leave(cx) {
     const d = this.drag, l = d?.last;
     const down = Boolean(l?.h) && l.h - l.y <= Math.min(l.y, l.x, l.w - l.x);
-    this.cancel(cx);
-    if (d?.moved && d.kind === "pane" && down) cx.spawn(async (cx) => this.splitOut(cx, d.terminal));
+    if (!(d?.moved && d.kind === "pane" && down)) { this.cancel(cx); return; }
+    d.out = true;
+    this.over = null;
+    cx.notify();
+    if (d.waiting) return;
+    d.waiting = true;
+    cx.spawn(async (cx) => {
+      let r = null;
+      try { r = await exec(`${home()}/.local/bin/herdr-optwatch`, ["up"], { timeout: 65000 }); } catch {}
+      d.waiting = false;
+      if (this.drag !== d || !d.out) return; // let go back in the bar, or still dragging there
+      this.drag = null;
+      this.over = null;
+      cx.notify();
+      if (!r || r.code !== 0 || r.stdout.trim() === "up") await this.splitOut(cx, d.terminal);
+    });
   }
 
   // Waits (up to 10 s: parking and keeping wait for the terminal's machine) until the terminal
@@ -475,7 +492,8 @@ export default class Tabs extends View {
   // divided by it.
   ghost(t) {
     const d = this.drag;
-    if (!d?.moved || !d.at) return null;
+    // Dragged down out of the bar, it can't follow the pointer: the bar's "New tab" slot shows instead.
+    if (!d?.moved || !d.at || d.out) return null;
     const z = Number(settings()?.zoom) || 1, icon = this.programIcon(t, d.program);
     return h_flex().absolute().left((d.at.x - d.grab.x) / z).top((d.at.y - d.grab.y) / z).h(29).px(10).gap(7).rounded(7).items_center()
       .text_size(12.8).text_color(t.foreground).border(1).border_color(t.border).bg(t.raised).shadow_md()
@@ -541,7 +559,11 @@ export default class Tabs extends View {
       // Drags. Each tab notes that the pointer is over it (this.hit) before this hears the move.
       .on_mouse_move((e, cx) => this.dragMove(e, cx))
       .on_mouse_up("left", (_e, cx) => this.drop(cx))
-      .on_hover((inside, cx) => { if (!inside) this.leave(cx); })
+      // Out: see leave(). Back in with a pane still in hand: an ordinary drag again.
+      .on_hover((inside, cx) => {
+        if (!inside) this.leave(cx);
+        else if (this.drag?.out) { this.drag.out = false; cx.notify(); }
+      })
       // The wheel goes through the shown tabs.
       .on_scroll_wheel(e => {
         if (Math.abs(e.delta.y) < 1 || !flat.length) return;

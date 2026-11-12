@@ -75,7 +75,7 @@ git pull && ./install.sh
 |---|---|
 | `herdr-app/keys.json` | The keys above |
 | `herdr-app/layouts/my-main.json` | Layout *my-main*: a soft blue-gray focus frame; my-projects above my-agents in the sidebar; my-pane headers and my-menu right-click menus |
-| `herdr-app/mods/my-projects/` | The Projects panel. `model.js` holds its logic. `optwatch.c` tells it whether ⌥ is held, since a mod only sees modifier keys while it has the keyboard, which a terminal usually does; `install.sh` builds it to `~/.local/bin/herdr-optwatch` |
+| `herdr-app/mods/my-projects/` | The Projects panel. `model.js` holds its logic. `optwatch.c` is a small helper, built by `install.sh` to `~/.local/bin/herdr-optwatch`. It tells the panel whether ⌥ is held, and tells the tab bar when a drag you took below the bar ends, since a mod only hears modifier keys while it has the keyboard (a terminal usually does) and the mouse while it's over the mod |
 | `herdr-app/mods/my-tabs/` | The tab bar, with the Overview button, closes you can reopen (`reopen.js`), ⌘G (`waiting.js`) and the ⌃Tab order (`recent.js`). `projects.js` is a copy of my-projects' `model.js`, because a mod can't import from another mod's folder |
 | `herdr-app/mods/agent-switcher/` | The ⌃Tab popup: a card per pane, with an agent's last prompt and reply, or a shell's folder |
 | `herdr-app/mods/my-pane/` | Pane headers (a copy of Herdr's own). The split, zoom and close buttons are replaced by one, Move to new tab, shown on panes in a split |
