@@ -27,7 +27,10 @@ Projects span machines and folders. The tab bar shows one project at a time, gro
 | ⌃Tab, ⌃⇧Tab | Back to the pane you were in before: agents, background sessions, shells, even the other half of a split. Each card shows the last prompt and reply |
 | ⌘G | Jump to the agent that last rang (needs you, or finished). Works from any app with Raycast |
 | ⌘W | Close the pane, then the tab, then the space. ⌘⇧W or ⌘⇧T reopens |
+| ⌘T | A new tab in this space |
 | ⌘H ⌘J ⌘K ⌘L | Move between panes |
+
+On a machine that can't be reached (say, waiting for its login), ⌘T and ⌘W can't do anything there. Instead they open a local terminal and show the login command in a toast.
 
 ## Requirements
 

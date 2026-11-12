@@ -38,6 +38,11 @@ const faint = (c, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(c ?? "") ? c + alp
 const allTabs = () => tabsOf(spaces(), panes(), agents(), agentKeys(shared("new-menu.agents")),
   new Map(terminals().map((x) => [x.address, x.labels])));
 const select = (tab) => { run("space.select", { id: tab.space }); run("tab.select", { id: tab.id }); };
+// A machine whose layout can't be read now (offline, or waiting for a login, as vista after its
+// MFA lapses): Herdr's commands on its spaces fail. Never this computer (null).
+const down = (machine) => Boolean(machine) && machines().find((m) => m.name === machine)?.layout === "unavailable";
+// The machine of a tab or pane id ("vista/tb…"); null for this computer's.
+const machineOf = (id) => (String(id ?? "").includes("/") ? String(id).split("/")[0] : null);
 
 // One call to herdr-core's API (JSON-RPC, a line each, over `hc connect`; exec has no stdin, so
 // sh pipes the two lines in). The reply, or null.
@@ -90,6 +95,7 @@ export default class Tabs extends View {
         const c = String(await nextCommand());
         try {
           if (c === "close" || c.startsWith("close ")) this.closeTab(cx, c.slice(6).trim() || null);
+          else if (c === "new-tab") this.newTab();
           else if (c === "reopen") await this.reopen.reopen(cx);
           else if (c === "waiting" || c === "waiting away") this.goWaiting(c === "waiting away");
           else if (c === "switch" || c === "switch-back") this.switchAgent(c === "switch" ? 1 : -1);
@@ -172,6 +178,14 @@ export default class Tabs extends View {
   // first, so Herdr never shows the next tab of the space (maybe another project's) in between.
   // id: a tab ("tb…") or a pane ("p…"); none: the focused pane, or its tab if it's alone there.
   closeTab(cx, id) {
+    // On a machine that can't be reached nothing there can close (and no reopen record should
+    // be kept for it): ⌘W gives you a local terminal instead; a tab's × or Close says why.
+    const at = id ? machineOf(id) : this.shownMachine();
+    if (down(at)) {
+      if (id) this.machineNotice(at);
+      else this.offline(at);
+      return;
+    }
     const f = focused(), all = panes(), pane = id && String(id).split("/").pop().startsWith("p");
     const tabId = id ? (pane ? all.find((p) => p.pane === id)?.tab : id) : f?.tab;
     const mine = all.filter((p) => p.tab === tabId);
@@ -188,6 +202,42 @@ export default class Tabs extends View {
       }
     }
     this.reopen.close(cx, id);
+  }
+
+  // ⌘T ("new-tab" in keys.json): a new tab in the shown space, as Herdr's tab.new. On a machine
+  // that can't be reached, a local terminal instead.
+  newTab() {
+    const at = this.shownMachine();
+    if (down(at)) this.offline(at);
+    else run("tab.new");
+  }
+
+  // The machine of the tab on screen (of the shown space when no pane has focus); null: this computer.
+  shownMachine() {
+    return machineOf(focused()?.tab) ?? spaces().find((s) => s.active)?.machine ?? null;
+  }
+
+  // The shown machine can't be reached: a new local terminal (a tab in this computer's first
+  // space, or a new local space), so there's somewhere to work or log in, and a note saying why.
+  offline(machine) {
+    const local = spaces().find((s) => !s.machine);
+    if (local) {
+      run("space.select", { id: local.id });
+      run("tab.new", { space: local.id });
+    } else run("space.new", { machine: "" });
+    this.machineNotice(machine);
+  }
+
+  // Why a machine can't be used, as a toast. A login in Herdr's own words, which the toast mod
+  // shows as the command with a Copy button; else its state from `hc machine ls`.
+  async machineNotice(machine) {
+    let state = null;
+    try { state = JSON.parse((await hc(["machine", "ls", "--json"])).stdout).machines?.find((m) => m.name === machine)?.state ?? null; } catch {}
+    if (state && state !== "needs_login") {
+      notify({ title: `${machine} isn't connected`, body: `It's ${state.replace(/_/g, " ")}.`, level: "warning", timeout: 15000 });
+    } else {
+      notify({ title: `${machine} needs login`, body: `${machine} needs login; run hc machine login ${machine}`, level: "warning", timeout: 30000 });
+    }
   }
 
   // ⌘1–⌘9 ("tab-1"…"tab-9" in keys.json): the bar's tabs (nthTab). Herdr's own tab.select

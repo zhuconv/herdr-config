@@ -65,6 +65,7 @@
   },
   "layout:my-main": {
     "cmd-w": "my-tabs.close",
+    "cmd-t": "my-tabs.new-tab",
     "cmd-shift-w": "my-tabs.reopen",
     "cmd-shift-t": "my-tabs.reopen",
     "cmd-g": "my-tabs.waiting",
