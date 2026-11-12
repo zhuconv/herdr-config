@@ -409,9 +409,12 @@ export default class Tabs extends View {
         .when(aimed === "before", (line) => line.left(-5)).when(aimed === "after", (line) => line.right(-5))));
   }
 
+  // A directory with one tab (a split counts as one) is no group: just the tab, with no dot or
+  // line, never folded (a fold left from when it had more mustn't hide it).
   // A group, with no name: a dot in its directory's color (on hover it names the directory, a click folds the group and leaves the dot and its tab count), its
   // tabs, and a thin line in that color, equally strong all along, under all of it.
   group(t, g, color, active) {
+    if (g.tabs.length === 1) return h_flex().id(`group-${hash(g.key)}`).h_full().flex_none().items_center().child(this.tab(t, g, g.tabs[0], color, active));
     const folded = this.folded.has(g.key);
     const dot = h_flex().id(`grp-${hash(g.key)}`).h(29).px(7).gap(5).flex_none().items_center().rounded(7)
       .text_size(11.5).font_semibold().text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover))
@@ -461,7 +464,7 @@ export default class Tabs extends View {
     // Every tab's number, folded groups' too (nthTab counts the same way).
     this.nums = new Map(groups.flatMap((g) => g.tabs).map((x, i) => [x.id, i + 1]));
     const active = focused()?.tab ?? null;
-    const flat = groups.filter((g) => !this.folded.has(g.key)).flatMap((g) => g.tabs);
+    const flat = groups.filter((g) => g.tabs.length === 1 || !this.folded.has(g.key)).flatMap((g) => g.tabs);
     const to = this.drag?.moved ? this.target() : null;
     const root = layout(), sidebar = find(root, "sidebar"), w = window();
     // Old saved rails and a dragged-narrow sidebar can be smaller than the window buttons.
