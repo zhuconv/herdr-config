@@ -1,9 +1,11 @@
-// my-tabs: ⌃Tab switches agents in the order you last visited them, as ⌘Tab does for apps.
-// Recent keeps that order; my-tabs feeds it the focused agent a few times a second.
+// my-tabs: ⌃Tab switches panes in the order you last focused them, as ⌘Tab does for apps.
+// Any terminal counts (an agent, a background session, a shell you've been in), so the two
+// panes of a split take turns too. Recent keeps that order; my-tabs feeds it the focused
+// terminal a few times a second.
 
 export class Recent {
   constructor(saved) {
-    this.order = Array.isArray(saved) ? saved : []; // addresses, most recent first
+    this.order = Array.isArray(saved) ? saved : []; // terminal addresses, most recent first
   }
 
   // True when the order changed, i.e. worth saving.
@@ -13,13 +15,13 @@ export class Recent {
     return true;
   }
 
-  // What ⌃Tab offers: the current agent first, then the others by when you last
-  // visited them, then ones never visited, in the order agents() lists them.
-  list(agents, current) {
-    const live = agents.map((a) => a.address);
+  // What ⌃Tab offers: the current terminal first, then the others by when you last focused
+  // them, then agents never focused, in Herdr's order. live: every terminal shown in a pane;
+  // agents: the agents among them (background sessions too).
+  list(live, agents, current) {
     const has = new Set(live);
     const visited = this.order.filter((a) => has.has(a) && a !== current);
-    const rest = live.filter((a) => a !== current && !visited.includes(a));
+    const rest = agents.filter((a) => a !== current && has.has(a) && !visited.includes(a));
     return [...(current && has.has(current) ? [current] : []), ...visited, ...rest];
   }
 }

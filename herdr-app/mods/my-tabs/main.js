@@ -5,7 +5,7 @@ import { spaces, panes, run, openOverlay, theme, window, shared, layout, setting
 import { Reopener } from "./reopen.js";
 import { Waiting } from "./waiting.js";
 import { Recent } from "./recent.js";
-import { tabsOf, agentKeys, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
+import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
@@ -96,16 +96,22 @@ export default class Tabs extends View {
     // in front, so the focused agent isn't one you were looking at.
     this.waiting = new Waiting();
     this.tracker = cx.timer.every(1000, () => this.waiting.track(agents(), Date.now()));
-    // my-tabs: ⌃Tab / ⌃⇧Tab ("switch" / "switch-back") open the agent switcher
-    // (mods/agent-switcher) over the agents in the order you last visited them (recent.js).
+    // my-tabs: ⌃Tab / ⌃⇧Tab ("switch" / "switch-back") open the switcher (mods/agent-switcher)
+    // over the panes in the order you last focused them (recent.js).
     this.recent = new Recent(JSON.parse(localStorage.getItem("recent") ?? "[]"));
     if (shared(SWITCH)) setShared(SWITCH, null); // no popup survives a restart
     this.visits = cx.timer.every(300, (cx) => { this.visit(); if (this.track()) cx.notify(); });
   }
 
+  // The focused pane's terminal (a mod pane has none), noted for ⌃Tab.
+  focusedTerminal() {
+    const f = focused();
+    return (f?.pane ? panes().find((p) => p.pane === f.pane)?.terminal : null) ?? f?.terminal ?? null;
+  }
+
   visit() {
-    const a = agents().find((x) => x.focused);
-    if (a && this.recent.visit(a.address)) localStorage.setItem("recent", JSON.stringify(this.recent.order));
+    const t = this.focusedTerminal();
+    if (t && this.recent.visit(t)) localStorage.setItem("recent", JSON.stringify(this.recent.order));
   }
 
   // Focus moved: note when (a project picked in the left panel shows until then), and keep the
@@ -197,14 +203,16 @@ export default class Tabs extends View {
       return;
     }
     this.visit();
-    const all = agents(), current = all.find((a) => a.focused)?.address ?? null;
-    const list = this.recent.list(all, current).slice(0, 15);
-    if (list.length - (current ? 1 : 0) < 1) {
-      notify({ title: "No other agent to switch to", timeout: 2500 });
+    const ps = panes(), live = ps.filter((p) => p.terminal).map((p) => p.terminal);
+    const mine = withBackground(agents(), { panes: ps, spaces: spaces(), terminals: terminals(), keys: agentKeys(shared("new-menu.agents")) });
+    const current = this.focusedTerminal();
+    const list = this.recent.list(live, mine.map((a) => a.address), current).slice(0, 15);
+    if (list.length - (list[0] === current ? 1 : 0) < 1) {
+      notify({ title: "Nothing else to switch to", timeout: 2500 });
       return;
     }
-    // Like ⌘Tab: the current agent shows first and the one before it is picked.
-    const index = step > 0 ? (current ? 1 : 0) : list.length - 1;
+    // Like ⌘Tab: the current pane shows first and the one before it is picked.
+    const index = step > 0 ? (list[0] === current ? 1 : 0) : list.length - 1;
     setShared(SWITCH, { list, index, from: focused()?.pane ?? null, at: Date.now(), alive: false });
     openOverlay({ mod: "agent-switcher", kind: "window", frame: "none", props: { preview } });
   }
