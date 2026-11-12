@@ -7,5 +7,6 @@
   "font_size": 15,
   "font_ligatures": false,
   "minimum_contrast": 1,
-  "theme": "warp-dracula"
+  "theme": "warp-dracula",
+  "option_as_alt": "on"
 }

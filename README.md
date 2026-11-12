@@ -85,7 +85,7 @@ git pull && ./install.sh
 | `herdr-app/mods/my-menu/` | Right-click menus (a copy of Herdr's own). A pane in a split gets Move to new tab; a split tab in the bar gets Move X to new tab for each name |
 | `herdr-app/mods/my-agents/` | The Agents list, as "agent · space", background sessions included. `projects.js` is the same copy as in my-tabs |
 | `herdr-app/mods/agent-deck-*` | The Overview panel, from [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
-| `herdr-app/settings.json`, `themes/warp-dracula.json` | Font, theme, zoom, sounds |
+| `herdr-app/settings.json`, `themes/warp-dracula.json` | Font, theme, zoom, sounds. `option_as_alt: "on"` makes Option act as Alt with every input source: with a Chinese input method in Chinese mode, Herdr's default sends ⌥1 to the input method, which types it instead of switching projects |
 | `claude/agent-note` | The Claude Code hook. It keeps the start of your last prompt and the end of the reply for the ⌃Tab cards, and sets `note.state` (working or idle) for background sessions, which report no state to Herdr. `install.sh` adds it to `~/.claude/settings.json` |
 | `raycast/` | The Raycast script for ⌘G in any app. `postkey.c` keeps ⌘G as Find Next in VS Code |
 | `install.sh`, `save.sh`, `paths.sh` | Install, save back, and the list of what's synced |
