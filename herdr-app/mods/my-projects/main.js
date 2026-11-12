@@ -22,7 +22,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, focusedPill, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -395,6 +395,18 @@ export default class Projects extends View {
     cx.notify();
   }
 
+  // The open pill (whose conversations are listed) follows the ringed one (the focused
+  // conversation's): when the focused conversation is in another pill than at the last draw
+  // (focus moved, or Claude started in the pane you're in and its pill appeared), that pill
+  // opens. One opened by hand stays open until then; the first draw keeps the saved ones.
+  followFocus(projects, unsorted) {
+    const f = focusedPill(projects, unsorted, UNSORTED), key = f ? `${f.group}\u0000${f.pill}` : null;
+    const first = this.focusSeen === undefined;
+    if (first || key === this.focusSeen) { this.focusSeen = key; return; }
+    this.focusSeen = key;
+    if (f && this.open[f.group] !== f.pill) { this.open[f.group] = f.pill; this.save(); }
+  }
+
   // Stamps conversations whose state changed (done and idle count as one).
   track(list, now) {
     let dirty = false;
@@ -623,6 +635,7 @@ export default class Projects extends View {
     this.names = projects.map((p) => p.name);
     this.shown = Object.fromEntries([...projects.map((p) => [p.name, p.pills.map((pl) => pl.key)]),
       ...(unsorted ? [[UNSORTED, unsorted.pills.map((pl) => pl.key)]] : [])]);
+    this.followFocus(projects, unsorted);
     if (narrow()) return this.rail(t, projects, unsorted);
     const ring = ringColor(t);
     const rows = [

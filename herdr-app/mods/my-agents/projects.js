@@ -248,6 +248,17 @@ export function group(convs, state, { home, order = [], pills: pillOrder = [] } 
   };
 }
 
+// The pill holding the focused conversation, as { group, pill }: group is a project's name,
+// or unsortedKey for Unsorted's pills; null when no conversation has focus.
+export function focusedPill(projects, unsorted, unsortedKey) {
+  const groups = [...projects.map((p) => [p.name, p.pills]), ...(unsorted ? [[unsortedKey, unsorted.pills]] : [])];
+  for (const [group, pills] of groups) {
+    const pl = pills.find((x) => x.convs.some((c) => c.focused));
+    if (pl) return { group, pill: pl.key };
+  }
+  return null;
+}
+
 // The tab bar (mods/my-tabs, which keeps a copy of this file) shows one project's tabs,
 // grouped by directory as the pills group conversations.
 
