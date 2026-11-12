@@ -46,14 +46,20 @@ chmod +x "$HOME/.local/bin/agent-note"
 # Claude Code: run agent-note on UserPromptSubmit and Stop (added once, never twice).
 python3 claude/merge-hooks.py
 
-# postkey hands ⌘G back to VS Code. The Command Line Tools' default SDK can be newer
-# than its compiler; then an older SDK that links is used.
-src="$HOME/.local/share/postkey/postkey.c" out="$HOME/.local/bin/postkey"
-built=""
-for sdk in "" $(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX[0-9]*.sdk 2>/dev/null | sort -r); do
-  if clang -O2 ${sdk:+-isysroot "$sdk"} -framework ApplicationServices -o "$out" "$src" 2>/dev/null; then built=1; break; fi
-done
-[ -n "$built" ] || echo "postkey wasn't built (needs the Xcode Command Line Tools): ⌘G in VS Code won't find-next."
+# Small C helpers. The Command Line Tools' default SDK can be newer than its compiler; then an
+# older SDK that links is used.
+build_c() { # source, binary
+  for sdk in "" $(ls -d /Library/Developer/CommandLineTools/SDKs/MacOSX[0-9]*.sdk 2>/dev/null | sort -r); do
+    clang -O2 ${sdk:+-isysroot "$sdk"} -framework ApplicationServices -o "$2" "$1" 2>/dev/null && return 0
+  done
+  return 1
+}
+# postkey hands ⌘G back to VS Code.
+build_c "$HOME/.local/share/postkey/postkey.c" "$HOME/.local/bin/postkey" \
+  || echo "postkey wasn't built (needs the Xcode Command Line Tools): ⌘G in VS Code won't find-next."
+# herdr-optwatch tells the Projects panel when ⌥ is held, to show the projects' ⌥1–⌥9 numbers.
+build_c "$H/mods/my-projects/optwatch.c" "$HOME/.local/bin/herdr-optwatch" \
+  || echo "herdr-optwatch wasn't built (needs the Xcode Command Line Tools): holding ⌥ won't number the projects."
 
 rc=$(raycast_script)
 mkdir -p "$(dirname "$rc")"

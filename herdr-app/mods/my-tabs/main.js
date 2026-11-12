@@ -407,8 +407,7 @@ export default class Tabs extends View {
         .when(aimed === "before", (line) => line.left(-5)).when(aimed === "after", (line) => line.right(-5))));
   }
 
-  // A group, with no name: a dot in its directory's color (its pill's dot on the left; on hover
-  // it names the directory, a click folds the group and leaves the dot and its tab count), its
+  // A group, with no name: a dot in its directory's color (on hover it names the directory, a click folds the group and leaves the dot and its tab count), its
   // tabs, and a thin line in that color, equally strong all along, under all of it.
   group(t, g, color, active) {
     const folded = this.folded.has(g.key);

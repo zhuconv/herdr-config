@@ -18,7 +18,7 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand } from "herdr";
+import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, window } from "herdr";
 import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent } from "./model.js";
 
 const MOD = "my-projects";
@@ -84,6 +84,12 @@ function mark(t, s) {
 function tile(ic, size = 18) {
   return h_flex().size(size).flex_none().rounded(5).bg(ic.color + "33").items_center().justify_center()
     .child(svg(icon(ic.glyph)).size(Math.round(size * 0.67)).text_color(ic.color));
+}
+
+// A tile with a number in place of the icon: while ⌥ is held, ⌥1–⌥9 pick these rows.
+function numTile(n, bg, fg, size = 18) {
+  return h_flex().size(size).flex_none().rounded(5).bg(bg).items_center().justify_center()
+    .text_size(Math.round(size * 0.64)).font_bold().text_color(fg).child(String(n));
 }
 
 function plainTile(t, path, size = 18) {
@@ -208,6 +214,20 @@ export default class Projects extends View {
     this.hit = null; // the group and pill the pointer event now going up the tree passed through
     this.hitPill = null;
     this.names = []; // the projects as shown, in order
+    // ⌥ held: the rows show their ⌥1–⌥9 numbers. A mod hears modifier keys only with keyboard
+    // focus, which a terminal has, so a tiny watcher (optwatch.c, built by install.sh) returns
+    // as ⌥ goes down or up, and starts again. Not built: no numbers.
+    this.alt = false;
+    cx.spawn(async (cx) => {
+      const bin = `${home()}/.local/bin/herdr-optwatch`;
+      for (;;) {
+        let r;
+        try { r = await exec(bin, [this.alt ? "1" : "0"], { timeout: 600000 }); } catch { return; }
+        if (r.code !== 0) return;
+        const alt = r.stdout.trim() === "1";
+        if (alt !== this.alt) { this.alt = alt; cx.notify(); }
+      }
+    });
     this.shown = {}; // each group's pills as shown (keys), by group
     // The list's scroll position, kept across redraws: a fold must not send it to the top.
     this.scroll = ScrollHandle.new();
@@ -403,7 +423,7 @@ export default class Projects extends View {
       .when(o.lifted, (el) => el.opacity(0.35))
       .cursor_pointer().hover((s) => s.bg(t.hover)).tooltip(o.tooltip)
       .on_mouse_down("left", (e) => this.press({ kind: "dir", key: o.key, from: o.group, grab: e.local_position ?? { x: 12, y: 11 },
-        look: { machine: o.machine, label: o.label, detail: o.detail, color: o.color } }, e))
+        look: { machine: o.machine, label: o.label, detail: o.detail } }, e))
       .on_mouse_move((e) => {
         if (this.drag?.kind === "dir") this.hitPill = { key: o.key, after: e.local_position.x > (e.bounds?.width ?? 0) / 2, box: e.bounds };
       })
@@ -416,8 +436,6 @@ export default class Projects extends View {
   // user had them taken off, here and on the project rows.
   pillParts(t, o) {
     return [
-      // The directory's color, the one its group of tabs has in the tab bar.
-      ...(o.color ? [div().size(7).flex_none().rounded(4).bg(o.color)] : []),
       svg(chrome(o.machine ? "server" : "monitor")).size(11).flex_none().text_color(t.muted),
       div().flex_none().text_size(11.5).text_color(o.dim ? t.muted : t.foreground).child(o.label),
       div().min_w(0).max_w(104).truncate().text_size(11.5).text_color(t.muted).child(o.detail),
@@ -478,9 +496,11 @@ export default class Projects extends View {
   // above it when coming from below, under it from above); a pill goes into it (the box).
   project(t, p, ring, now) {
     const closed = this.closed.has(p.key);
+    const num = this.number(p.icon ? this.names.indexOf(p.name) : this.names.length);
     const head = this.head(t, {
       id: hash(p.key), name: p.label ?? p.name, closed, dim: !p.convs.length,
-      tile: p.icon ? tile(p.icon) : plainTile(t, icon("inbox")),
+      tile: num ? (p.icon ? numTile(num, p.icon.color + "33", p.icon.color) : numTile(num, t.selected, t.foreground))
+        : p.icon ? tile(p.icon) : plainTile(t, icon("inbox")),
       status: loud(urgent(p.convs.map((c) => c.status))),
       toggle: () => (closed ? this.closed.delete(p.key) : this.closed.add(p.key)),
       pick: () => pickProject(p.icon ? p.name : null),
@@ -511,7 +531,6 @@ export default class Projects extends View {
       h_flex().flex_none().flex_wrap().gap(5).pl(35).pb(6).children(p.pills.map((pl) => this.pill(t, `pill-${hash(p.key + "\u0000" + pl.key)}`, ring, {
         key: pl.key, group: p.key, lifted: d?.kind === "dir" && d.moved && d.key === pl.key && d.from === p.key,
         machine: pl.machine, label: pl.label, detail: pl.detail, dim: !pl.convs.length,
-        color: (shared(DIRCOLORS) ?? {})[pl.key] ?? null,
         open: pl === shown, here: pl.convs.some((c) => c.focused),
         status: pl === shown ? null : loud(urgent(pl.convs.map((c) => c.status))),
         tooltip: `${pl.machine ?? "This computer"}: ${shortPath(pl.path, homeOf(pl.machine))}. Drag to reorder, or onto another project; right-click to move it.`,
@@ -520,6 +539,12 @@ export default class Projects extends View {
       }))),
       ...(shown ? [this.pathRow(t, shown), ...shown.convs.map((c) => this.conv(t, c, now)), div().h(6).flex_none()] : []),
     ];
+  }
+
+  // A row's ⌥ number (from 1; rows from 0: the projects, then Unsorted) while ⌥ is held in
+  // Herdr's window, else null.
+  number(row) {
+    return this.alt && window()?.active && row >= 0 && row < 9 ? row + 1 : null;
   }
 
   // The narrow sidebar: a tile per project; a click goes to the conversation that needs you most.
@@ -536,8 +561,10 @@ export default class Projects extends View {
     return v_flex().size_full().min_h(0).bg(t.chrome).items_center()
       .child(h_flex().h(31).flex_none().items_center().justify_center().child(this.plus(t)))
       .child(v_flex().id("projects-rail").flex_1().min_h(0).w_full().items_center().gap(2).pb(14).overflow_y_scrollbar().children([
-        ...projects.map((p) => cell(hash(p.name), p.name, tile(iconOf(p.name)), p.convs)),
-        ...(unsorted ? [cell("unsorted", "Unsorted", plainTile(t, icon("inbox")), unsorted.convs)] : []),
+        ...projects.map((p, i) => { const ic = iconOf(p.name), num = this.number(i);
+          return cell(hash(p.name), p.name, num ? numTile(num, ic.color + "33", ic.color) : tile(ic), p.convs); }),
+        ...(unsorted ? [cell("unsorted", "Unsorted", this.number(projects.length) ? numTile(this.number(projects.length), t.selected, t.foreground)
+          : plainTile(t, icon("inbox")), unsorted.convs)] : []),
       ]));
   }
 
