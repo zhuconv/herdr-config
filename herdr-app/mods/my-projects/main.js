@@ -2,15 +2,16 @@
 // machine; a conversation (an agent) belongs to the project holding the directory it runs
 // in or its nearest parent, else it waits in Unsorted. A group shows a pill per directory,
 // folded until clicked; an open pill's path has a + that starts Claude in that directory.
-// Click a project's row to show its tabs in the tab bar (mods/my-tabs, grouped by these
-// directories, each with its pill's color dot); its chevron folds it. Drag a pill among its
-// group's pills to reorder them, or onto another group to move its directory there;
-// right-click it to move it (into a project, a new one, or back to Unsorted). Right-click a
-// project to make a new directory for it (on any machine: made there, added to the project,
-// Claude started in it), rename it, change its icon or delete it (its directories go back to
-// Unsorted); drag a project's row to reorder the projects. On Vista (a login node, where Claude
-// can't run) the + and New directory… open a terminal instead. Shells aren't listed here; a
-// tab with no agent shows on the tab bar.
+// Click a project's row to fold or unfold it; the + at its right makes a new directory for it
+// (on any machine: made there, added to the project, Claude started in it). ⌥1–⌥9 show a
+// project's tabs in the tab bar (mods/my-tabs, grouped by these directories), as does focusing
+// one of its conversations. Drag a pill among its group's pills to reorder them, or onto
+// another group to move its directory there; right-click it to move it (into a project, a new
+// one, or back to Unsorted). Right-click a project for New directory… too, or to rename it,
+// change its icon or delete it (its directories go back to Unsorted); drag a project's row to
+// reorder the projects. On Vista (a login node, where Claude can't run) the pill's + and New
+// directory… open a terminal instead. Shells aren't listed here; a tab with no agent shows on
+// the tab bar.
 //
 // Kept in shared state: "my-projects.state" ({ projects: [{ name, dirs }], loose }; see
 // model.js), "my-projects.icons" (each project's icon), "my-projects.order" (the projects'
@@ -280,8 +281,8 @@ export default class Projects extends View {
         // From the blank-area menu (a popup is another copy of this mod: it asks this one).
         else if (verb === "fold-all") { this.closed = new Set([...this.names, UNSORTED]); this.save(); }
         else if (verb === "unfold-all") { this.closed = new Set(); this.save(); }
-        // ⌥1–⌥9 (keys.json "project-1"…"project-9"): the Nth row from the top, as a click on
-        // it; Unsorted, when it shows, is the last row.
+        // ⌥1–⌥9 (keys.json "project-1"…"project-9"): shows the Nth row's project in the tab bar
+        // (a click on a row only folds it); Unsorted, when it shows, is the last row.
         else if (/^project-[1-9]$/.test(verb)) {
           const g = projectsNow(), rows = [...g.projects.map((p) => p.name), ...(g.unsorted ? [null] : [])];
           const n = Number(verb.slice(8));
@@ -408,32 +409,32 @@ export default class Projects extends View {
       .on_click(() => openNew()).child(svg(chrome("plus")).size(14));
   }
 
-  // A group's row: icon, name, (folded: its loudest state), chevron. A press on a
-  // project's row starts a drag (see project()); a click folds it.
+  // A group's row: icon, name, (folded: its loudest state), and a project's + (New directory…).
+  // A click folds or unfolds it (the user's choice, 2026-11-12; ⌥1–⌥9 switch projects). A press
+  // on a project's row starts a drag (see project()).
   head(t, h) {
     const logo = div().id(`icon-${h.id}`).size(24).flex_none().rounded(6).flex().items_center().justify_center().child(h.tile)
       .when(Boolean(h.iconClick), (el) => el.cursor_pointer().hover((s) => s.bg(t.hover)).tooltip("Change icon")
         // Pressing the icon starts no drag.
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click((_e, cx) => { cx.stop_propagation(); h.iconClick(); }));
-    // Only the chevron folds.
-    const fold = div().id(`fold-${h.id}`).size(20).flex_none().rounded(5).flex().items_center().justify_center()
-      .cursor_pointer().hover((s) => s.bg(t.selected)).tooltip(h.closed ? "Unfold" : "Fold")
+    const add = h.add ? div().id(`add-${h.id}`).size(20).flex_none().rounded(5).flex().items_center().justify_center()
+      .text_color(t.dim).cursor_pointer().hover((s) => s.bg(t.selected).text_color(t.foreground)).tooltip("New directory…")
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-      .on_click((_e, cx) => { cx.stop_propagation(); h.toggle(); this.save(); cx.notify(); })
-      .child(svg(chrome(h.closed ? "chevron-right" : "chevron-down")).size(11).text_color(t.dim));
+      .on_click((_e, cx) => { cx.stop_propagation(); h.add(); })
+      .child(svg(chrome("plus")).size(12)) : null;
     return h_flex().id(`head-${h.id}`).h(30).flex_none().pl(5).pr(4).gap(6).items_center().rounded(8)
       .when(h.current, (el) => el.bg(t.hover))
       .cursor_pointer().hover((s) => s.bg(t.hover))
       .when(Boolean(h.drag), (el) => el.on_mouse_down("left", (e) => this.press({ kind: "project", name: h.drag }, e)))
-      // A click shows the project's tabs in the tab bar. A release that ends a drag isn't a click.
-      .on_click((_e, cx) => { if (this.drag?.moved) return; h.pick(); cx.notify(); })
+      // A release that ends a drag isn't a click.
+      .on_click((_e, cx) => { if (this.drag?.moved) return; h.toggle(); this.save(); cx.notify(); })
       // A row with its own menu keeps the right-click from the list's blank-area menu.
       .when(Boolean(h.menu), (el) => el.on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); h.menu(); }))
       .child(logo)
       .child(div().flex_1().min_w(0).truncate().font_medium().text_color(h.dim ? t.muted : t.foreground).child(h.name))
       .when(h.closed && Boolean(h.status), (el) => el.child(mark(t, h.status)))
-      .child(fold);
+      .when(Boolean(add), (el) => el.child(add));
   }
 
   // A directory's pill. Pressed and dragged, a copy goes with the pointer (ghost()); let go
@@ -527,7 +528,7 @@ export default class Projects extends View {
         : p.icon ? tile(p.icon) : plainTile(t, icon("inbox")),
       status: loud(urgent(p.convs.map((c) => c.status))),
       toggle: () => (closed ? this.closed.delete(p.key) : this.closed.add(p.key)),
-      pick: () => pickProject(p.icon ? p.name : null),
+      add: p.icon ? () => openNewDir(p.name) : null,
       current: this.shownProject !== undefined && this.shownProject === (p.icon ? p.name : null),
       iconClick: p.icon ? () => openIcon(p.name) : null,
       menu: p.icon ? () => openProject(p.name) : null,
