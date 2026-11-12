@@ -314,10 +314,19 @@ export function tabGroups(tabs, state, project, { home, pills = [], order = [] }
   return orderPills([...byKey.entries()].map(([key, list]) => {
     const { machine, path } = splitDir(key);
     return {
-      key, machine, path, label: machine ?? "local", detail: isHome(path, machine ? null : home) ? "~" : baseName(path),
+      key, dir: key, machine, path, label: machine ?? "local", detail: isHome(path, machine ? null : home) ? "~" : baseName(path),
       tabs: list.sort((a, b) => pos(a) - pos(b) || a.spaceIndex - b.spaceIndex || a.index - b.index),
     };
-  }), pills);
+  }), pills).flatMap((g) => {
+    // A tab with no agent (a shell, a quick command, a mod) is in no group: it stands alone
+    // right after its directory's, as a group of its own (key: its own; dir: the directory's;
+    // terminal: true), which the bar draws with no dot or line.
+    const solo = g.tabs.filter((t) => !t.panes.some((p) => p.agent));
+    if (!solo.length) return [g];
+    const grouped = g.tabs.filter((t) => !solo.includes(t));
+    return [...(grouped.length ? [{ ...g, tabs: grouped }] : []),
+      ...solo.map((t) => ({ ...g, key: `${g.key}\u0000${t.id}`, terminal: true, tabs: [t] }))];
+  });
 }
 
 // Where picking a project goes: its last-used pane if it's still one of its tabs', else the
@@ -325,7 +334,7 @@ export function tabGroups(tabs, state, project, { home, pills = [], order = [] }
 export function landing(groups, last) {
   const tabs = groups.flatMap((g) => g.tabs);
   if (last && tabs.some((t) => t.panes.some((p) => p.pane === last))) return last;
-  return tabs[0]?.listed[0]?.pane ?? null;
+  return (tabs.find((t) => t.panes.some((p) => p.agent)) ?? tabs[0])?.listed[0]?.pane ?? null;
 }
 
 // ⌘1–⌘8 pick that tab of the bar and ⌘9 the last, as in a browser. Folding a group doesn't

@@ -457,7 +457,7 @@ export default class Tabs extends View {
     const stored = shared(DIRCOLORS) ?? {};
     const owned = Object.keys(stored).filter((k) => ownerOf(k, st.projects, st.loose) === project);
     const icon = project === null ? null : (shared(ICONS) ?? {})[project]?.color ?? null;
-    const given = withDirColors(stored, [{ keys: [...new Set([...groups.map((g) => g.key), ...owned])], icon }]);
+    const given = withDirColors(stored, [{ keys: [...new Set([...groups.filter((g) => !g.terminal).map((g) => g.key), ...owned])], icon }]);
     if (given) setShared(DIRCOLORS, given);
     const colors = given ?? stored;
     this.view = groups;
