@@ -3,7 +3,7 @@ import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings,
   terminals, focused, machines, hc, exec, notify, nextCommand, agents, setShared, home } from "herdr";
 import { Reopener } from "./reopen.js";
-import { Waiting } from "./waiting.js";
+import { pickWaiting } from "./waiting.js";
 import { Recent } from "./recent.js";
 import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
 import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
@@ -13,18 +13,17 @@ const SWITCH = "my-tabs.switcher";
 
 // The bar shows one project's tabs (from every space), grouped by directory like the left
 // panel's pills (mods/my-projects; projects.js is a copy of its model). Shared with it: its
-// projects, its pill order, the project picked there ({ project, at }), each project's
-// last-used pane, each directory's color; and from here, the project shown ({ project }) and
-// the tabs' dragged order (tab ids, one list).
+// projects, its pill order, the project picked there ({ project, at }), each directory's
+// color; and from here, the project shown ({ project }) and the tabs' dragged order (tab ids,
+// one list). Each project's last-used pane the left panel keeps itself: a shared write
+// redraws every mod, too much for each move of focus.
 const STATE = "my-projects.state";
 const PILLS = "my-projects.pills";
 const PICK = "my-projects.pick";
-const LAST = "my-projects.last";
 const DIRCOLORS = "my-projects.groupcolors";
 const ICONS = "my-projects.icons";
 const SHOWN = "my-tabs.project";
 const ORDER = "my-tabs.order";
-const UNSORTED = "\u0000unsorted";
 
 const projectState = () => {
   const s = shared(STATE);
@@ -113,13 +112,11 @@ export default class Tabs extends View {
     // my-tabs: "waiting" (⌘G) goes to the agent that rang last (waiting.js). "waiting away"
     // comes from the Raycast hotkey (~/Documents/Raycast/bear/herdr-waiting.sh) when Herdr wasn't
     // in front, so the focused agent isn't one you were looking at.
-    this.waiting = new Waiting();
-    this.tracker = cx.timer.every(1000, () => this.waiting.track(agents(), Date.now()));
     // my-tabs: ⌃Tab / ⌃⇧Tab ("switch" / "switch-back") open the switcher (mods/agent-switcher)
-    // over the panes in the order you last focused them (recent.js).
+    // over the panes in the order you last focused them (recent.js). Herdr redraws the bar
+    // whenever focus moves, so render notes each move (visit, track); nothing polls for it.
     this.recent = new Recent(JSON.parse(localStorage.getItem("recent") ?? "[]"));
     if (shared(SWITCH)) setShared(SWITCH, null); // no popup survives a restart
-    this.visits = cx.timer.every(300, (cx) => { this.visit(); if (this.track()) cx.notify(); });
   }
 
   // The focused pane's terminal (a mod pane has none), noted for ⌃Tab.
@@ -133,26 +130,23 @@ export default class Tabs extends View {
     if (t && this.recent.visit(t)) localStorage.setItem("recent", JSON.stringify(this.recent.order));
   }
 
-  // Focus moved: note when (a project picked in the left panel shows until then), and keep the
-  // pane as its project's last-used one. True when it moved. If it moved because the shown tab
-  // went away (⌘W, its ×, a menu, its shell exited) and Herdr showed another project's tab (the
-  // next one in the space), the bar's neighbour is shown instead (projects.js replacement).
+  // Focus moved: note when (a project picked in the left panel shows until then). True when it
+  // moved. If it moved because the shown tab went away (⌘W, its ×, a menu, its shell exited)
+  // and Herdr showed another project's tab (the next one in the space), the bar's neighbour is
+  // shown instead (projects.js replacement).
   track() {
     const f = focused(), pane = f?.pane ?? null;
     if (pane === this.focusPane) return false;
     this.focusPane = pane;
     this.focusAt = Date.now();
-    const tabs = allTabs(), st = projectState();
-    const tab = pane ? tabs.find((t) => t.id === f.tab) : null;
     const was = this.lastShown;
-    if (was && tab && (tabProject(tab, st) ?? null) !== was.project) {
+    // The shown tab is still there (the usual move): nothing to replace, no tabs to work out.
+    if (!was || !pane || spaces().some((s) => s.tabs.some((t) => t.id === was.tab))) return true;
+    const tabs = allTabs(), tab = tabs.find((t) => t.id === f.tab);
+    if (tab && (tabProject(tab, projectState()) ?? null) !== was.project) {
       const id = replacement(was, new Set(tabs.map((t) => t.id)));
       const to = id ? tabs.find((t) => t.id === id) : null;
-      if (to) { this.lastShown = null; select(to); return true; }
-    }
-    if (tab) {
-      const key = tabProject(tab, st) ?? UNSORTED, last = shared(LAST) ?? {};
-      if (last[key] !== pane) setShared(LAST, { ...last, [key]: pane });
+      if (to) { this.lastShown = null; select(to); }
     }
     return true;
   }
@@ -281,9 +275,7 @@ export default class Tabs extends View {
   }
 
   goWaiting(away) {
-    const list = agents();
-    this.waiting.track(list, Date.now());
-    const a = this.waiting.pick(list, !away);
+    const a = pickWaiting(agents(), !away);
     if (a) run("pane.focus", { pane: a.pane });
     else notify({ title: "No agent is waiting for you", timeout: 2500 });
   }
@@ -631,6 +623,8 @@ export default class Tabs extends View {
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
+    // Herdr redraws the bar when focus moves (it reads focused()): this is where moves are noted.
+    this.visit();
     this.track();
     const { st, project, groups } = this.bar();
     if (this.published !== project) { this.published = project; setShared(SHOWN, { project }); }

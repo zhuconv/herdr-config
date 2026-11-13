@@ -1,7 +1,7 @@
 // my-tabs: ⌃Tab switches panes in the order you last focused them, as ⌘Tab does for apps.
 // Any terminal counts (an agent, a background session, a shell you've been in), so the two
 // panes of a split take turns too. Recent keeps that order; my-tabs feeds it the focused
-// terminal a few times a second.
+// terminal each time it draws (Herdr redraws it when focus moves).
 
 export class Recent {
   constructor(saved) {

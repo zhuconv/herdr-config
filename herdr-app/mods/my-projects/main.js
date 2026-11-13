@@ -17,12 +17,12 @@
 // model.js), "my-projects.icons" (each project's icon), "my-projects.order" (the projects'
 // dragged order) and "my-projects.pills" (the pills' dragged order: directory keys, one
 // list for all groups). This copy's localStorage: folds, open pills, when each agent last
-// changed state. The same mod draws its popups (props.role).
+// changed state, each project's last-used pane. The same mod draws its popups (props.role).
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { agents, panes, terminals, spaces, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, focusedPill, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
+import { agents, panes, terminals, spaces, focused, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window } from "herdr";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, focusedPill, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabProject, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -33,10 +33,12 @@ const PILLS = `${MOD}.pills`;
 // first draw and its height start from these.
 const MACHINES = `${MOD}.machines`;
 // With the tab bar (mods/my-tabs), which shows one project's tabs: the project picked here
-// ({ project, at }; null: Unsorted), each project's last-used pane (the bar keeps it), each
-// directory's color (pill dots, tab groups), the project the bar shows ({ project }), the
-// bar's dragged tab order.
+// ({ project, at }; null: Unsorted), each directory's color (pill dots, tab groups), the
+// project the bar shows ({ project }), the bar's dragged tab order.
 const PICK = `${MOD}.pick`;
+// Each project's last-used pane, as the tab bar kept it here until 2026-11-12, writing it at
+// every move of focus (and a shared write redraws every mod). This copy keeps it now
+// (remember()); the old value starts it once and is dropped.
 const LAST = `${MOD}.last`;
 const DIRCOLORS = `${MOD}.groupcolors`;
 const OLD_DIRCOLORS = `${MOD}.dircolors`; // colors by an earlier rule (2026-11-11), dropped
@@ -190,10 +192,11 @@ const NEWDIR_KEYS = "MyProjectsNewDir"; // the dialog's key context: its Tab, �
 
 // Picking a project (null: Unsorted) shows its tabs in the tab bar: its last-used pane gets
 // focus, else its first tab's; with no tabs, the bar shows it empty until focus moves.
-function pickProject(name) {
+// last: each project's last-used pane (the panel's remember()).
+function pickProject(name, last) {
   const tabs = tabsOf(spaces(), panes(), agents(), keysNow());
   const groups = tabGroups(tabs, state(), name, { home: home(), pills: shared(PILLS) ?? [], order: shared(TAB_ORDER) ?? [] });
-  const pane = landing(groups, (shared(LAST) ?? {})[name ?? UNSORTED]);
+  const pane = landing(groups, last?.[name ?? UNSORTED]);
   setShared(PICK, { project: name, at: Date.now() });
   if (pane) run("pane.focus", { pane });
 }
@@ -249,27 +252,22 @@ export default class Projects extends View {
     this.hit = null; // the group and pill the pointer event now going up the tree passed through
     this.hitPill = null;
     this.names = []; // the projects as shown, in order
+    // Each project's last-used pane, by name (UNSORTED: Unsorted's), where ⌥1–⌥9 land
+    // (pickProject); noted as focus moves (remember()). Started once from the tab bar's old
+    // shared copy (see LAST).
+    const map = (v) => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
+    this.last = map(read("last", null));
+    if (!this.last) {
+      this.last = { ...(map(shared(LAST)) ?? {}) };
+      localStorage.setItem("last", JSON.stringify(this.last));
+    }
+    this.lastPane = undefined; // the focused pane remember() last saw
     // ⌥ held: the rows show their ⌥1–⌥9 numbers. A mod hears modifier keys only with keyboard
     // focus, which a terminal has, so a tiny watcher (optwatch.c, built by install.sh) returns
-    // as ⌥ goes down or up, and starts again. It never gives up for good: when the watcher
-    // ends some other way (killed, not built yet), it starts again a second later (a minute
-    // when it isn't there). It used to stop at the first such end, and the numbers with it.
+    // as ⌥ goes down or up (or after 30 s), and starts again, while Herdr is the app in front:
+    // the numbers show only then. Render starts it when Herdr comes to the front (watchAlt).
     this.alt = false;
-    cx.spawn(async (cx) => {
-      const bin = `${home()}/.local/bin/herdr-optwatch`;
-      while (!this.ended) {
-        let r = null;
-        try { r = await exec(bin, [this.alt ? "1" : "0"], { timeout: 600000 }); } catch {}
-        if (this.ended) return;
-        if (!r || r.code !== 0) {
-          if (this.alt) { this.alt = false; cx.notify(); }
-          await cx.sleep(r ? 1000 : 60000);
-          continue;
-        }
-        const alt = r.stdout.trim() === "1";
-        if (alt !== this.alt) { this.alt = alt; cx.notify(); }
-      }
-    });
+    this.watching = false;
     this.shown = {}; // each group's pills as shown (keys), by group
     // The list's scroll position, kept across redraws: a fold must not send it to the top.
     this.scroll = ScrollHandle.new();
@@ -305,7 +303,7 @@ export default class Projects extends View {
         else if (/^project-[1-9]$/.test(verb)) {
           const g = projectsNow(), rows = [...g.projects.map((p) => p.name), ...(g.unsorted ? [null] : [])];
           const n = Number(verb.slice(8));
-          if (n <= rows.length) pickProject(rows[n - 1]);
+          if (n <= rows.length) pickProject(rows[n - 1], this.last);
         }
         cx.notify();
       }
@@ -417,6 +415,50 @@ export default class Projects extends View {
     if (first || key === this.focusSeen) { this.focusSeen = key; return; }
     this.focusSeen = key;
     if (f && this.open[f.group] !== f.pill) { this.open[f.group] = f.pill; this.save(); }
+  }
+
+  // Each project's last-used pane (see init): the focused pane, filed under its tab's project
+  // the way the tab bar files tabs (model.js tabsOf, tabProject). Herdr redraws this panel when
+  // focus moves, so render calls this; only a move does any work.
+  remember() {
+    const f = focused(), pane = f?.pane ?? null;
+    if (pane === this.lastPane) return;
+    this.lastPane = pane;
+    const space = pane ? spaces().find((s) => (s.tabs ?? []).some((t) => t.id === f.tab)) : null;
+    const tab = space ? tabsOf([space], panes(), agents(), keysNow()).find((t) => t.id === f.tab) : null;
+    if (!tab) return;
+    const key = tabProject(tab, state()) ?? UNSORTED;
+    if (this.last[key] === pane) return;
+    this.last[key] = pane;
+    localStorage.setItem("last", JSON.stringify(this.last));
+  }
+
+  // The ⌥ watcher (see init): one at a time, while Herdr is the app in front. When the watcher
+  // ends some other way (killed, not built yet), it starts again a second later (a minute when
+  // it isn't there), so the numbers never stop for good.
+  watchAlt(cx) {
+    if (this.watching || this.ended) return;
+    this.watching = true;
+    cx.spawn(async (cx) => {
+      try {
+        const bin = `${home()}/.local/bin/herdr-optwatch`;
+        while (!this.ended && window()?.active) {
+          let r = null;
+          try { r = await exec(bin, [this.alt ? "1" : "0"], { timeout: 60000 }); } catch {}
+          if (this.ended) return;
+          if (!r || r.code !== 0) {
+            if (this.alt) { this.alt = false; cx.notify(); }
+            await cx.sleep(r ? 1000 : 60000);
+            continue;
+          }
+          const alt = r.stdout.trim() === "1";
+          if (alt !== this.alt) { this.alt = alt; cx.notify(); }
+        }
+        if (this.alt) { this.alt = false; cx.notify(); }
+      } finally {
+        this.watching = false;
+      }
+    });
   }
 
   // Stamps conversations whose state changed (done and idle count as one).
@@ -627,6 +669,10 @@ export default class Projects extends View {
   render(cx) {
     if (this.part) return this.part.render(cx);
     const t = theme(), now = Date.now();
+    // Herdr redraws this when it comes to the front (window() is live): the ⌥ watcher starts.
+    if (window()?.active) this.watchAlt(cx);
+    this.remember();
+    if (shared(LAST) != null) setShared(LAST, null); // the tab bar's old copy (see LAST)
     const convs = conversations();
     this.track(convs, now);
     const { projects, unsorted } = projectsNow(convs);
