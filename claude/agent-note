@@ -19,6 +19,12 @@ it, found through hc: each running `claude attach <its id>`, else a `claude` win
 prints nothing (a UserPromptSubmit or SessionStart hook's output would join the conversation)
 and always exits 0, so it never gets in Claude's way.
 
+note.bg: a background session on a machine without Herdr's app (a server) also says its state
+there, for the tab bar on the Mac, which watches only the Mac's own records of Claude's
+background sessions (mods/my-tabs/jobs.js). "<state> <job> <time>": working from a prompt; at
+the end of a turn, how Claude recorded it ended (done, blocked, or still working when it waits
+on its own task), read from ~/.claude/jobs/<job>/state.json once Claude has written it.
+
 On a cluster compute node the terminal's hc runs on the login node. There the label goes
 through `ssh <login node>`: $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev session.
 (Vista: plain ssh from a node to login1 needs no MFA; BatchMode=yes would break it.)
@@ -31,15 +37,18 @@ import shutil
 import socket
 import subprocess
 import sys
+import time
+from datetime import datetime, timezone
 
 
 def main():
     event = json.load(sys.stdin)
-    own = os.environ.get("HC_TERMINAL_ID")
-    terms = [own] if own and not os.environ.get("CLAUDE_JOB_DIR") else attached(event.get("session_id"))
+    job, own = os.environ.get("CLAUDE_JOB_DIR"), os.environ.get("HC_TERMINAL_ID")
+    terms = [own] if own and not job else attached(event.get("session_id"))
     if not terms:
         return
     name = event.get("hook_event_name")
+    report = bool(job) and not os.path.isdir(os.path.expanduser("~/.config/herdr-app"))
     if name == "UserPromptSubmit":
         key, text, state = "note.prompt", " ".join((event.get("prompt") or "").split())[:160], "working"
     elif name == "Stop":
@@ -58,8 +67,55 @@ def main():
         return
     if name != "SessionStart":
         pairs = (f"note.state={state}", *([f"{key}={text}"] if text else []))
+        if report and name == "UserPromptSubmit":
+            pairs += (f"note.bg=working {os.path.basename(job.rstrip('/'))} {now()}",)
     for term in terms:
         label(term, *pairs)
+    if report and name == "Stop":
+        value = bg_state(job)
+        for term in terms:
+            label(term, f"note.bg={value}")
+
+
+DORMANT = "send a prompt to start"  # a job that isn't running, in Claude's words
+
+
+def job_status(r):
+    """A background session's record as Herdr shows an agent's state, by the rules of
+    mods/my-tabs/jobs.js jobStatus: tempo "active" from a prompt until the turn ends, "blocked"
+    while it waits for you; then state says how the turn ended, "working" when it waits on its
+    own task (which wakes it again)."""
+    if not isinstance(r, dict):
+        return None
+    tempo, state = r.get("tempo"), r.get("state")
+    if tempo == "active":
+        return "working"
+    if tempo == "blocked":
+        return "idle" if r.get("needs") == DORMANT else "blocked"
+    if state in ("working", "starting", "resuming"):
+        return "working"
+    return state if state in ("blocked", "done") else "idle"
+
+
+def bg_state(job_dir, wait=12.0):
+    """note.bg at the end of a turn. Claude records how the turn ended a moment after Stop (up to
+    a few seconds), so its record is read until it no longer says the turn is running."""
+    path, end, r = os.path.join(job_dir, "state.json"), time.time() + wait, None
+    while True:
+        try:
+            with open(path) as f:
+                r = json.load(f)
+        except (OSError, ValueError):
+            r = None
+        if (isinstance(r, dict) and r.get("tempo") not in ("active", None)) or time.time() >= end:
+            break
+        time.sleep(0.25)
+    when = r.get("updatedAt") if isinstance(r, dict) else None
+    return f"{job_status(r) or 'idle'} {os.path.basename(job_dir.rstrip('/'))} {when or now()}"
+
+
+def now():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
 def attached(session):

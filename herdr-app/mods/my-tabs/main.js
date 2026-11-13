@@ -6,7 +6,7 @@ import { spaces, panes, run, openOverlay, theme, window, shared, layout, setting
 import { readdir } from "fs/promises";
 import { Reopener } from "./reopen.js";
 import { pickWaiting } from "./waiting.js";
-import { Jobs, attachedTo } from "./jobs.js";
+import { Jobs, attachedTo, fromRecord, fromNote, matches } from "./jobs.js";
 import { Recent } from "./recent.js";
 import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
 import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
@@ -127,21 +127,27 @@ export default class Tabs extends View {
     if (shared(SWITCH)) setShared(SWITCH, null); // no popup survives a restart
     // my-tabs: background sessions (a pane running `claude attach <id>`) as Herdr's agents
     // (jobs.js): each one's state goes on its terminal as the label note.job, which the lists
-    // read (projects.js noteStatus), and a finish or a question rings as Herdr's own do.
+    // read (projects.js noteStatus), and a finish or a question rings as Herdr's own do. A session
+    // here is read from Claude Code's record of it; another machine's, from the label its hook
+    // writes there (claude/agent-note: note.bg).
     let seen = null;
     try { seen = JSON.parse(localStorage.getItem("jobs.seen") ?? "null"); } catch {}
     this.fresh = !(seen && typeof seen === "object"); // the first run: every ending so far counts as seen
     this.jobs = new Jobs(this.fresh ? {} : seen);
     this.savedSeen = JSON.stringify(this.jobs.seen);
-    this.attached = new Map(); // terminal → { name: its title's, id: what it attached to }
+    this.attached = new Map(); // terminal → what it attached to: an id, its start, or a name
+    this.remote = new Map(); // another machine's such terminal → { raw: its note.bg as last read, key }
     this.written = new Map(); // terminal → its note.job as last written
     this.watchJobs(cx);
+    // Herdr doesn't redraw the bar while its window isn't in front, so then another machine's
+    // labels are looked at every 2 s, in Herdr's own list of terminals: nothing goes over the network.
+    this.remoteTimer = cx.timer.every(2000, () => { if (this.remote.size && !window()?.active) this.readRemote(); });
   }
 
   // ---- background sessions
 
-  // Claude Code's records of its background sessions: every one once (nothing rings for what
-  // happened before), then each one that changes. Its other files change all the time
+  // Claude Code's records of its background sessions here: every one once (nothing rings for
+  // what happened before), then each one that changes. Its other files change all the time
   // (timeline.jsonl, tmp/): only state.json is read.
   watchJobs(cx) {
     const root = `${home()}/.claude/jobs`;
@@ -164,7 +170,7 @@ export default class Tabs extends View {
         try {
           if (!names) {
             try { names = await readdir(root); } catch { names = []; }
-            for (const job of [...this.jobs.recs.keys()]) if (!names.includes(job)) this.jobs.read(job, null);
+            for (const job of [...this.jobs.recs.keys()]) if (!job.includes("/") && !names.includes(job)) this.jobs.read(job, null);
           }
           const top = Math.max(0, ...agents().map((a) => a.seq ?? 0)), rings = [];
           for (const job of names) {
@@ -172,7 +178,7 @@ export default class Tabs extends View {
             let r;
             try { r = JSON.parse((await readTextFile(`${root}/${job}/state.json`)) ?? "null"); } catch { continue; } // half-written: the next change reads it
             if (this.ended) return;
-            const ring = this.jobs.read(job, r, { first, looking: this.lookingAt(job), top });
+            const ring = this.jobs.read(job, fromRecord(r), { first, looking: this.lookingAt(job), top });
             if (ring) rings.push([job, ring]);
           }
           if (first) this.started();
@@ -189,11 +195,12 @@ export default class Tabs extends View {
     });
   }
 
-  // Every record read once: from now on changes are news, and labels can be written.
+  // Every record here read once: from now on changes are news, and labels can be written.
   started() {
     this.jobs.settle(this.fresh);
     this.fresh = false;
     this.ready = true;
+    this.readRemote();
   }
 
   saveSeen() {
@@ -201,40 +208,66 @@ export default class Tabs extends View {
     if (s !== this.savedSeen) { this.savedSeen = s; localStorage.setItem("jobs.seen", s); }
   }
 
-  // Which session each `claude attach` pane shows: its foreground program (hc get), asked once
-  // per pane and name (the title without its spinner). Noted as Herdr redraws the bar, which it
-  // does when panes come, go or change title. A pane that stopped showing one loses its label.
-  mapJobs() {
-    const reported = new Set(agents().map((a) => a.pane)), now = new Map();
+  // Which session each `claude attach` pane shows: Herdr's list of terminals has what each one
+  // runs (foreground.argv). Noted as Herdr redraws the bar, which it does when panes come and go
+  // and when what they run changes. A pane that stopped showing one loses its label.
+  mapJobs(terms) {
+    const reported = new Set(agents().map((a) => a.pane)), byAddr = new Map(terms.map((x) => [x.address, x]));
+    const now = new Map();
     for (const p of panes()) {
-      if (p.terminal && !p.terminal.includes("/") && p.program?.key === "claude" && !reported.has(p.pane)) {
-        now.set(p.terminal, (p.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim());
-      }
+      const id = p.terminal && !reported.has(p.pane) ? attachedTo(byAddr.get(p.terminal)?.foreground?.argv) : null;
+      if (id) now.set(p.terminal, id);
     }
     for (const t of [...this.attached.keys()]) {
       if (now.has(t)) continue;
       this.attached.delete(t);
+      this.remote.delete(t);
       if (this.written.get(t)) { this.written.set(t, ""); hc(["label", t, "note.job="]).catch(() => {}); }
     }
-    for (const [t, name] of now) {
-      const a = this.attached.get(t);
-      if (a && a.name === name) continue;
-      this.attached.set(t, { name, id: a?.id ?? null });
-      hc(["get", t, "--json"]).then((r) => {
-        const cur = this.attached.get(t);
-        if (!cur || this.ended) return;
-        try { cur.id = attachedTo(JSON.parse(r.stdout)?.foreground?.argv); } catch { cur.id = null; }
-        this.labelJobs();
-      }).catch(() => {});
+    for (const [t, id] of now) {
+      if (this.attached.get(t) !== id) { this.attached.set(t, id); this.remote.delete(t); }
+      if (t.includes("/") && !this.remote.has(t)) this.remote.set(t, { raw: null, key: null });
     }
   }
 
+  // Another machine's sessions: the hook there puts each one's state on the terminals showing it
+  // (note.bg), and a new value is news, as a changed record is here. A pane's first value isn't:
+  // it was so before this looked.
+  readRemote(terms = terminals()) {
+    if (!this.ready || !this.remote.size) return;
+    const labels = new Map(terms.map((x) => [x.address, x.labels ?? {}]));
+    const rings = [];
+    let top = null;
+    for (const [t, r] of this.remote) {
+      const raw = labels.get(t)?.["note.bg"] ?? "";
+      if (r.raw === raw) continue;
+      const first = r.raw === null, e = fromNote(raw), id = this.attached.get(t);
+      r.raw = raw;
+      // A label left by an earlier session in this terminal isn't this one's.
+      r.key = e && id && matches(id, e.job) ? `${t.split("/")[0]}/${e.job}` : null;
+      if (!r.key) continue;
+      top ??= Math.max(0, ...agents().map((a) => a.seq ?? 0));
+      const ring = this.jobs.read(r.key, e, { first, looking: this.looking(t), top });
+      if (ring) rings.push([r.key, ring]);
+    }
+    for (const [key, ring] of rings) this.ring(key, ring);
+    this.saveSeen();
+    this.labelJobs();
+  }
+
+  // The session a pane shows, as the tracker knows it: a job here, "<machine>/<job>" elsewhere.
+  keyOf(t) {
+    return t.includes("/") ? this.remote.get(t)?.key ?? null : this.jobs.find(this.attached.get(t));
+  }
+
   // Each attach pane's label note.job: its session's state as the lists show it ("" removes it).
+  // Not while its machine can't be reached (one waiting for a login, say): it would only fail.
   labelJobs() {
     if (!this.ready) return;
     let labels = null;
-    for (const [t, a] of this.attached) {
-      const job = this.jobs.find(a.id), want = (job && this.jobs.shown(job)) || "";
+    for (const t of this.attached.keys()) {
+      if (down(machineOf(t))) continue;
+      const key = this.keyOf(t), want = (key && this.jobs.shown(key)) || "";
       if (!this.written.has(t)) {
         labels ??= new Map(terminals().map((x) => [x.address, x.labels ?? {}]));
         this.written.set(t, labels.get(t)?.["note.job"] ?? "");
@@ -246,8 +279,8 @@ export default class Tabs extends View {
   }
 
   // The panes showing a session.
-  termsOf(job) {
-    return [...this.attached].filter(([, a]) => this.jobs.find(a.id) === job).map(([t]) => t);
+  termsOf(key) {
+    return [...this.attached.keys()].filter((t) => this.keyOf(t) === key);
   }
 
   // Whether you're looking at a terminal, as Herdr decides it: its window is in front and the
@@ -258,16 +291,16 @@ export default class Tabs extends View {
     return Boolean(p && tab && p.tab === tab && !all.some((x) => x.tab === tab && x.zoomed && x.pane !== p.pane));
   }
 
-  lookingAt(job) {
-    return this.termsOf(job).some((t) => this.looking(t));
+  lookingAt(key) {
+    return this.termsOf(key).some((t) => this.looking(t));
   }
 
   // A finished session you're looking at has been seen: it shows idle from now on.
   lookJobs() {
     let seen = false;
-    for (const [t, a] of this.attached) {
-      const job = this.jobs.find(a.id);
-      if (job && this.jobs.shown(job) === "done" && this.looking(t)) seen = this.jobs.look(job) || seen;
+    for (const t of this.attached.keys()) {
+      const key = this.keyOf(t);
+      if (key && this.jobs.shown(key) === "done" && this.looking(t)) seen = this.jobs.look(key) || seen;
     }
     if (seen) { this.saveSeen(); this.labelJobs(); }
   }
@@ -275,8 +308,8 @@ export default class Tabs extends View {
   // As Herdr tells you an agent needs you or finished (window.rs alert): its sound, and unless
   // you're looking at it, a toast that takes you there (my-toast names it as the Agents list
   // does). Only for a session shown in a pane here.
-  ring(job, kind) {
-    const terms = this.termsOf(job);
+  ring(key, kind) {
+    const terms = this.termsOf(key);
     if (!terms.length) return;
     if (settings()?.sounds?.enabled !== false) playSound(kind);
     if (terms.some((t) => this.looking(t))) return;
@@ -284,7 +317,7 @@ export default class Tabs extends View {
     const space = spaces().find((s) => (s.tabs ?? []).some((x) => x.id === p?.tab));
     const tab = space?.tabs.find((x) => x.id === p?.tab);
     notify({
-      title: `${this.jobs.recs.get(job)?.name || "Claude Code"} ${kind === "blocked" ? "needs you" : "finished"}`,
+      title: `${this.jobs.recs.get(key)?.name || "Claude Code"} ${kind === "blocked" ? "needs you" : "finished"}`,
       ...(space && tab ? { body: `${space.name} / ${tab.name}` } : {}),
       level: kind === "blocked" ? "error" : "info",
       action: { name: "agent.focus", args: { terminal: terms[0] } },
@@ -292,10 +325,10 @@ export default class Tabs extends View {
   }
 
   // A background session's entry (projects.js withBackground) with its state and ⌘G place from
-  // its record: the label lags a moment behind.
+  // the tracker: the label lags a moment behind.
   withJob(a) {
-    const job = this.jobs.find(this.attached.get(a.address)?.id);
-    return job ? { ...a, status: this.jobs.shown(job) ?? a.status, seq: this.jobs.seq.get(job) ?? 0 } : a;
+    const key = this.keyOf(a.address);
+    return key ? { ...a, status: this.jobs.shown(key) ?? a.status, seq: this.jobs.seq.get(key) ?? 0 } : a;
   }
 
   // The focused pane's terminal (a mod pane has none), noted for ⌃Tab.
@@ -809,7 +842,9 @@ export default class Tabs extends View {
     this.track();
     // And when panes change, or the window comes to the front: which session each attach pane
     // shows, and which finished one you're looking at now.
-    this.mapJobs();
+    const terms = terminals();
+    this.mapJobs(terms);
+    this.readRemote(terms);
     this.lookJobs();
     const { st, project, groups } = this.bar();
     if (this.published !== project) { this.published = project; setShared(SHOWN, { project }); }
