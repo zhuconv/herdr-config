@@ -83,6 +83,7 @@ git pull && ./install.sh
 | `herdr-app/mods/agent-switcher/` | The ⌃Tab popup: a card per pane, with an agent's last prompt and reply, or a shell's folder |
 | `herdr-app/mods/my-pane/` | Pane headers (a copy of Herdr's own). The split, zoom and close buttons are replaced by one, Move to new tab, shown on panes in a split |
 | `herdr-app/mods/my-menu/` | Right-click menus (a copy of Herdr's own). A pane in a split gets Move to new tab; a split tab in the bar gets Move X to new tab for each name |
+| `herdr-app/mods/my-toast/` | Notifications (a copy of Herdr's own). When an agent finishes or needs you, the toast calls it what the Agents list does (a tab you named, else the session's name) instead of "Claude Code". `projects.js` is the same copy of my-projects' `model.js` |
 | `herdr-app/mods/my-agents/` | The Agents list, as "agent · space", background sessions included. `projects.js` is the same copy as in my-tabs |
 | `herdr-app/mods/agent-deck-*` | The Overview panel, from [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
 | `herdr-app/settings.json`, `themes/warp-dracula.json` | Font, theme, zoom, sounds. `option_as_alt: "on"` makes Option act as Alt with every input source: with a Chinese input method in Chinese mode, Herdr's default sends ⌥1 to the input method, which types it instead of switching projects |
