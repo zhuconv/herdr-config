@@ -4,10 +4,13 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
-import { agentKeys, withBackground } from "./projects.js";
+import { agentKeys, withBackground, sessionTitle, projectOf } from "./projects.js";
 
 // my-agents: background sessions too (`claude attach` to one), which Herdr's agents() leaves
 // out: projects.js withBackground (a copy of mods/my-projects/model.js).
+// my-agents: a row reads "agent · project" with a small machine tag, the project as the left
+// panel (mods/my-projects) files it, from its shared "my-projects.state".
+const PROJECTS = "my-projects.state";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -45,7 +48,7 @@ function leadPanes(all) {
 
 function title(tab, l) {
   const prog = l?.program?.name;
-  const live = clean(l?.title);
+  const live = clean(sessionTitle(l));
   const telling = live && live !== prog && !/^[~/]|^[A-Za-z]:\\/.test(live) && !live.includes("@") && live.toLowerCase() !== l?.program?.key;
   return (tab.name === prog || !tab.named) && telling ? live : tab.name;
 }
@@ -233,9 +236,10 @@ export default class Agents extends View {
     // the agent it would switch to rather than the focused one: where you'd land.
     const picking = shared("my-tabs.switcher");
     const picked = picking?.list?.[picking.index] ?? null;
-    let list = withBackground(agents(), { panes: panes(), spaces: spaces(), terminals: terminals(), keys: agentKeys(shared("new-menu.agents")) });
+    // Read each snapshot once: every host read copies the whole list into JS.
+    const paneList = panes(), spaceList = spaces(), all = terminals();
+    let list = withBackground(agents(), { panes: paneList, spaces: spaceList, terminals: all, keys: agentKeys(shared("new-menu.agents")) });
     this.listed = new Map(list.map((a) => [a.address, a.status]));
-    const all = terminals();
     this.migratePins(all);
     const shown = focused()?.agent;
     const now = Date.now();
@@ -289,16 +293,21 @@ export default class Agents extends View {
         .when(!open, (el) => el.child(String(subs.length)));
     };
 
-    // A row reads "space \u00b7 detail": the detail is a tab someone named or the
-    // agent's own title, never an automatic tab number unless two rows would
-    // otherwise read the same.
-    // Read the pane snapshot once: every host read copies the whole list into JS.
-    const leads = leadPanes(panes());
-    const tabs = new Map(spaces().flatMap(s => s.tabs).map(tab => [tab.id, tab]));
+    // A row's name is a tab someone named or the agent's own title, never an automatic
+    // tab number unless two rows of a space would otherwise read the same.
+    const leads = leadPanes(paneList);
+    const tabs = new Map(spaceList.flatMap(s => s.tabs).map(tab => [tab.id, tab]));
+    // Each agent's project (null: Unsorted), from its pane's folder and its machine.
+    const paneOf = new Map(paneList.map((p) => [p.pane, p]));
+    const termOf = new Map(all.map((x) => [x.address, x]));
+    const spaceOf = new Map(spaceList.flatMap((s) => (s.tabs ?? []).map((tab) => [tab.id, s])));
+    const filed = shared(PROJECTS);
+    const projectBy = new Map(list.map((a) => [a.address,
+      projectOf(paneOf.get(a.pane) ?? { terminal: a.address }, termOf.get(a.address), spaceOf.get(a.tab), filed)]));
     const labels = new Map(list.map(a => {
       const tab = tabs.get(a.tab);
       const many = tabCounts.get(a.tab) > 1;
-      return [a.address, tab ? title(many ? { ...tab, named: false } : tab, many ? a : leads.get(a.tab)) : (a.title || a.program?.name || "")];
+      return [a.address, tab ? title(many ? { ...tab, named: false } : tab, many ? a : leads.get(a.tab)) : (sessionTitle(a) || a.program?.name || "")];
     }));
     const label = (a) => labels.get(a.address);
     const detail = new Map(list.map(a => [a.address, /^\d+$/.test(label(a)) ? null : label(a)]));
@@ -347,13 +356,12 @@ export default class Agents extends View {
           cx.notify();
         })
         .child(svg(`mods/workspace-chrome/${isPinned ? "pin-off" : "pin"}.svg`).size(13));
-      // Under a space header the space goes without saying; an automatic tab number says nothing.
-      // Without a space header above (priority, pinned) the row names its space.
-      // my-agents: the agent comes first and its space after it, dimmed ("herdr · local"),
-      // as in the ⌃Tab cards; the shipped list reads "local · herdr".
-      const full = byPriority || isPinned;
+      // An automatic tab number says nothing.
+      // my-agents: the agent comes first, then its project, dimmed ("fix-login · web-app"),
+      // in every view: a space header doesn't say the project. An Unsorted agent names none.
+      // As in the ⌃Tab cards; the shipped list reads "local · herdr" (space, then agent).
       const name = more ?? (/^\d+$/.test(label(a)) ? a.program?.name || label(a) : label(a));
-      const space = full && a.space_name && a.space_name !== name ? a.space_name : null;
+      const project = projectBy.get(a.address);
       return h_flex()
         .id(`ag-${a.address}`)
         .px(8)
@@ -378,9 +386,9 @@ export default class Agents extends View {
             cx.notify();
           })).child(pic)))
         .child(h_flex().flex_1().min_w(0).gap(5).items_center()
-          .child(div().min_w(0).max_w(space ? 140 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
-          .when(Boolean(space), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${space}`))))
-        .when(Boolean(machine) && machine !== space, el => el.child(div().text_size(10).text_color(t.dim).child(machine)))
+          .child(div().min_w(0).max_w(project ? 140 : 200).truncate().text_color(idle ? t.muted : t.foreground).child(name))
+          .when(Boolean(project), el => el.child(div().flex_1().min_w(0).truncate().text_color(t.dim).child(`\u00b7 ${project}`))))
+        .when(Boolean(machine), el => el.child(div().flex_none().text_size(10).text_color(t.dim).child(machine)))
         .when(subs.length > 0, el => el.child(fold(a, subs)))
         .when(this.hovered === a.address, el => el.child(pin))
         .when(this.hovered !== a.address && Boolean(when), el => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - when))))

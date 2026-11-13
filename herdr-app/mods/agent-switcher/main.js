@@ -5,15 +5,19 @@
 // letting go of ⌃ goes to the picked pane. Enter goes too, Esc goes back, arrows and Tab
 // move, a click picks a card.
 // A quick ⌃Tab tap switches before anything shows: the popup is invisible for REVEAL ms.
-// A card: the program's icon, name and space, the start of your last prompt and the end of
-// its last reply (a shell: its folder). Those two are the hc labels note.prompt / note.said,
-// which a Claude Code hook (~/.local/bin/agent-note) sets as they happen, so nothing is read here.
+// A card: the program's icon, name, project and machine (as in the Agents list), the start of
+// your last prompt and the end of its last reply (a shell: its folder). Those two are the hc
+// labels note.prompt / note.said, which a Claude Code hook (~/.local/bin/agent-note) sets as
+// they happen, so nothing is read here.
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, panes, terminals, spaces, run, shared, setShared, props, closeOverlay, theme, home } from "herdr";
+import { projectOf } from "./projects.js";
 
 const SWITCH = "my-tabs.switcher";
+// The left panel's projects (mods/my-projects); projects.js is a copy of its model.js.
+const PROJECTS = "my-projects.state";
 const REVEAL = 120;
 const CARD_W = 280, COLS = 4, GAP = 10, PAD = 12;
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
@@ -23,21 +27,22 @@ const AGENT_KEYS = new Set(["claude", "codex", "gemini", "opencode", "pi"]);
 
 // Every terminal shown in a pane, as its card shows it: the agent's own report, else the
 // pane's, with a background session's state from its agent-note label (note.state) and a
-// shell's as none.
+// shell's as none. Each with its project as the left panel files it (null: Unsorted).
 function entries() {
   const reported = new Map(agents().map((a) => [a.address, a]));
-  const labels = new Map(terminals().map((x) => [x.address, x.labels ?? {}]));
+  const terms = new Map(terminals().map((x) => [x.address, x]));
   const spaceOf = new Map(spaces().flatMap((sp) => (sp.tabs ?? []).map((tab) => [tab.id, sp])));
+  const filed = shared(PROJECTS);
   const out = new Map();
   for (const p of panes()) {
     if (!p.terminal || out.has(p.terminal)) continue;
+    const project = projectOf(p, terms.get(p.terminal), spaceOf.get(p.tab), filed);
     const a = reported.get(p.terminal);
-    if (a) { out.set(p.terminal, a); continue; }
+    if (a) { out.set(p.terminal, { ...a, project }); continue; }
     const agent = Boolean(p.program?.agent || AGENT_KEYS.has(p.program?.key));
-    const st = labels.get(p.terminal)?.["note.state"];
+    const st = terms.get(p.terminal)?.labels?.["note.state"];
     out.set(p.terminal, {
-      address: p.terminal, pane: p.pane, tab: p.tab, title: p.title ?? "", program: p.program, cwd: p.cwd,
-      space_name: spaceOf.get(p.tab)?.name ?? "",
+      address: p.terminal, pane: p.pane, tab: p.tab, title: p.title ?? "", program: p.program, cwd: p.cwd, project,
       status: p.status ?? (agent ? (st === "working" ? st : "idle") : null),
     });
   }
@@ -130,6 +135,8 @@ export default class AgentSwitcher extends View {
       const name = telling ? title : tab?.named && !/^\d+$/.test(tab.name) ? tab.name : a.program?.name ?? "Agent";
       const note = notes.get(address) ?? {};
       const icon = a.program?.icon, mark = this.status(t, a);
+      // Another machine's terminal says which (`vps/t7`).
+      const machine = address.includes("/") ? address.split("/")[0] : null;
       // A shell's first line is its folder; an agent's, your last prompt.
       const first = note["note.prompt"] ? `❯ ${note["note.prompt"]}` : a.status == null ? homeShort(a.cwd) : "";
       return v_flex()
@@ -146,11 +153,13 @@ export default class AgentSwitcher extends View {
         .hover((st) => (on ? st : st.bg(t.hover)))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
         .on_click(() => this.go(address))
-        // As in the Agents list: the program's icon (Claude, Codex…), then name · space.
+        // As in the Agents list: the program's icon (Claude, Codex…), then name · project (none
+        // when Unsorted) and a small machine tag.
         .child(h_flex().gap(8).items_center()
           .when(Boolean(icon), (el) => el.child(a.program.tint ? svg(icon).size(16).flex_none().text_color(t.muted) : image(icon).size(16).flex_none()))
           .child(div().flex_none().max_w(150).truncate().text_size(15).font_semibold().text_color(t.foreground).child(name))
-          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.muted).child(`· ${a.space_name || ""}`))
+          .child(div().flex_1().min_w(0).truncate().text_size(13).text_color(t.muted).child(a.project ? `· ${a.project}` : ""))
+          .when(Boolean(machine), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(machine)))
           .when(Boolean(mark), (el) => el.child(mark)))
         .child(div().h(17).truncate().text_size(12).text_color(t.dim).child(first))
         // The reply as "first sentence … last sentence" (agent-note keeps it to ~3 lines).

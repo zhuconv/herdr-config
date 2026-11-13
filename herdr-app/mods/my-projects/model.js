@@ -341,6 +341,16 @@ export function tabsOf(spaces, panes, agents, keys = agentKeys(), labels = new M
 
 export const tabProject = (t, state) => ownerOf(t.key, state.projects, state.loose ?? []);
 
+// The project a pane's conversation is in, as the left panel files it (main.js conversations):
+// its folder (the pane's live cwd, else its terminal's, else its space's) on its machine, owned
+// by a project (ownerOf); null for Unsorted. The Agents list and the ⌃Tab cards show it.
+// p: the pane (panes()), term: its terminal (terminals()), space: its space (spaces()).
+export function projectOf(p, term, space, state) {
+  const address = p?.terminal ?? "";
+  const machine = space?.machine ?? (address.includes("/") ? address.split("/")[0] : null);
+  return ownerOf(dirKey(machine, p?.cwd || term?.cwd || space?.folder || ""), state?.projects ?? [], state?.loose ?? []);
+}
+
 // One project's tabs (null: Unsorted), by directory: the groups in the left panel's pill
 // order, each group's tabs in their dragged order, the rest by space, then position.
 export function tabGroups(tabs, state, project, { home, pills = [], order = [] } = {}) {
@@ -451,12 +461,19 @@ export function duration(ms) {
   return h < 24 ? `${h}h` : `${Math.floor(h / 24)}d`;
 }
 
+// Codex reports "session | workspace" as its terminal title. Only the session
+// belongs in conversation labels; keep pipes inside the session's own name.
+export function sessionTitle(a) {
+  const raw = String(a?.title ?? "").trim();
+  return a?.program?.key === "codex" ? raw.replace(/\s+\|\s+[^|]+$/, "") : raw;
+}
+
 // A conversation's name, as the Agents list gives it: a tab someone named, else the
 // title the agent set (Claude Code's session name), else the program.
 const clean = (s) => String(s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 export function nameOf(a, tab) {
   const prog = a.program?.name;
-  const raw = String(a.title ?? "").trim();
+  const raw = sessionTitle(a);
   const live = clean(raw);
   // A folder for a title (a shell's) says nothing: test it before clean() eats its "~/".
   const path = /^[~/]|^[A-Za-z]:\\/.test(raw);

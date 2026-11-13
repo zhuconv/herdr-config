@@ -1,0 +1,8 @@
+{
+  "programs": {
+    "codex": {
+      "icon": "my-icons/codex-transparent.svg",
+      "tint": false
+    }
+  }
+}

@@ -5,6 +5,8 @@ H="$HOME/.config/herdr-app"
 ITEMS=(
   "herdr-app/keys.json|$H/keys.json"
   "herdr-app/settings.json|$H/settings.json"
+  "herdr-app/programs.json|$H/programs.json"
+  "herdr-app/my-icons/|$H/my-icons/"
   "herdr-app/layouts/my-main.json|$H/layouts/my-main.json"
   "herdr-app/themes/warp-dracula.json|$H/themes/warp-dracula.json"
   "herdr-app/mods/my-tabs/|$H/mods/my-tabs/"
