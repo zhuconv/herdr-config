@@ -5,17 +5,19 @@ UserPromptSubmit: the start of the prompt goes in the hc label note.prompt.
 Stop: the end of the reply (its last two lines) goes in note.said.
 Each also sets note.state: "working" from a prompt until the reply ends, then "idle". Herdr's
 Agents list, tab bar and Projects panel read it for sessions that report no status to Herdr
-(background ones, `claude attach`). An interrupted reply has no Stop: it stays "working" until
-the next prompt or reply.
+(background ones, `claude attach`) when the tab bar's own label from Claude's record of the
+session (note.job, mods/my-tabs/jobs.js) isn't there. An interrupted reply has no Stop: it stays
+"working" until the next prompt or reply.
 SessionStart: a resumed conversation's card shows its last prompt and reply right away, read
 from its transcript, not only after the next prompt. A new one (or /clear) drops the notes the
 terminal kept from the conversation before.
 All land on the hc terminal the agent runs in ($HC_TERMINAL_ID). A background session runs
-under Claude's daemon, outside any terminal: its labels go on the terminal showing it, found
-through hc: one running `claude attach <its id>`, else a `claude` window (`claude --resume` on
-a background job) titled with the job's name. Outside hc it does nothing. It prints nothing (a
-UserPromptSubmit or SessionStart hook's output would join the conversation) and always exits
-0, so it never gets in Claude's way.
+under Claude's daemon ($CLAUDE_JOB_DIR), outside any terminal; the $HC_TERMINAL_ID it has is the
+daemon's, from whichever terminal started the daemon. Its labels go on every terminal showing
+it, found through hc: each running `claude attach <its id>`, else a `claude` window (`claude
+--resume` on a background job) titled with the job's name. Outside hc it does nothing. It
+prints nothing (a UserPromptSubmit or SessionStart hook's output would join the conversation)
+and always exits 0, so it never gets in Claude's way.
 
 On a cluster compute node the terminal's hc runs on the login node. There the label goes
 through `ssh <login node>`: $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev session.
@@ -33,8 +35,9 @@ import sys
 
 def main():
     event = json.load(sys.stdin)
-    term = os.environ.get("HC_TERMINAL_ID") or attached(event.get("session_id"))
-    if not term:
+    own = os.environ.get("HC_TERMINAL_ID")
+    terms = [own] if own and not os.environ.get("CLAUDE_JOB_DIR") else attached(event.get("session_id"))
+    if not terms:
         return
     name = event.get("hook_event_name")
     if name == "UserPromptSubmit":
@@ -46,23 +49,27 @@ def main():
         source, path = event.get("source"), event.get("transcript_path")
         if source == "resume":
             prompt, reply = last_prompt(path), gist(last_reply(path))
-            label(term, "note.state=idle", f"note.prompt={prompt}" if prompt else "note.prompt=", f"note.said={reply}" if reply else "note.said=")
+            pairs = ("note.state=idle", f"note.prompt={prompt}" if prompt else "note.prompt=", f"note.said={reply}" if reply else "note.said=")
         elif source in ("startup", "clear"):
-            label(term, "note.state=idle", "note.prompt=", "note.said=")
-        return
+            pairs = ("note.state=idle", "note.prompt=", "note.said=")
+        else:
+            return
     else:
         return
-    label(term, f"note.state={state}", *([f"{key}={text}"] if text else []))
+    if name != "SessionStart":
+        pairs = (f"note.state={state}", *([f"{key}={text}"] if text else []))
+    for term in terms:
+        label(term, *pairs)
 
 
 def attached(session):
-    """The local hc terminal showing a background session: the one running `claude attach
-    <session, or the start of it>`, else a `claude` window titled with the job's name (as
-    `claude --resume` shows a background job, with the job's id nowhere in its command)."""
+    """The local hc terminals showing a background session: each one running `claude attach
+    <session, its name, or the start of its id>`, else a `claude` window titled with the job's
+    name (as `claude --resume` shows a background job, with the job's id nowhere in its command)."""
     if not session or os.environ.get("HC_VIA") or os.environ.get("SLURM_SUBMIT_HOST"):
-        return None
+        return []
     hc = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
-    name, titled = job_name(session), None
+    name, found, titled = job_name(session), [], []
     out = subprocess.run([hc, "ls", "--json"], capture_output=True, text=True, timeout=4).stdout
     for t in json.loads(out or "{}").get("terminals", []):
         address = t.get("address") or ""
@@ -72,11 +79,11 @@ def attached(session):
         argv = (got.get("foreground") or {}).get("argv") or []
         if not argv or os.path.basename(argv[0]) != "claude":
             continue
-        if len(argv) >= 3 and argv[-2] == "attach" and len(argv[-1]) >= 6 and session.startswith(argv[-1]):
-            return address
-        if name and titled is None and re.sub(r"^\W+", "", got.get("title") or "").strip() == name:
-            titled = address
-    return titled
+        if len(argv) >= 3 and argv[-2] == "attach" and ((len(argv[-1]) >= 6 and session.startswith(argv[-1])) or (name and argv[-1] == name)):
+            found.append(address)
+        elif name and re.sub(r"^\W+", "", got.get("title") or "").strip() == name:
+            titled.append(address)
+    return found or titled[:1]
 
 
 def job_name(session):

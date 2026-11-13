@@ -130,7 +130,7 @@ function conversations() {
     const at = tabs.get(p.tab), term = terms.get(address);
     const program = a?.program ?? p.program;
     return {
-      // A background session reports no status: its agent-note label says working or idle.
+      // A background session reports no status: its labels say (model.js noteStatus).
       address, pane: p.pane, status: a?.status ?? p.status ?? noteStatus(term?.labels), focused: p.focused, program, order: i,
       machine: at?.space.machine ?? (address.includes("/") ? address.split("/")[0] : null),
       space: at?.space.id ?? null,

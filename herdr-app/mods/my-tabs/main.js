@@ -1,9 +1,12 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings,
-  terminals, focused, machines, hc, exec, notify, nextCommand, agents, setShared, home } from "herdr";
+  terminals, focused, machines, hc, exec, notify, nextCommand, agents, setShared, home,
+  watchFolder, readTextFile, playSound } from "herdr";
+import { readdir } from "fs/promises";
 import { Reopener } from "./reopen.js";
 import { pickWaiting } from "./waiting.js";
+import { Jobs, attachedTo } from "./jobs.js";
 import { Recent } from "./recent.js";
 import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
 import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
@@ -65,6 +68,11 @@ function find(node, id) {
 }
 
 export default class Tabs extends View {
+  // Herdr is closing this copy (a reload): the job watcher stops before it could ring twice.
+  close() {
+    this.ended = true;
+  }
+
   init(_props, cx) {
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     let folded = [];
@@ -117,6 +125,177 @@ export default class Tabs extends View {
     // whenever focus moves, so render notes each move (visit, track); nothing polls for it.
     this.recent = new Recent(JSON.parse(localStorage.getItem("recent") ?? "[]"));
     if (shared(SWITCH)) setShared(SWITCH, null); // no popup survives a restart
+    // my-tabs: background sessions (a pane running `claude attach <id>`) as Herdr's agents
+    // (jobs.js): each one's state goes on its terminal as the label note.job, which the lists
+    // read (projects.js noteStatus), and a finish or a question rings as Herdr's own do.
+    let seen = null;
+    try { seen = JSON.parse(localStorage.getItem("jobs.seen") ?? "null"); } catch {}
+    this.fresh = !(seen && typeof seen === "object"); // the first run: every ending so far counts as seen
+    this.jobs = new Jobs(this.fresh ? {} : seen);
+    this.savedSeen = JSON.stringify(this.jobs.seen);
+    this.attached = new Map(); // terminal → { name: its title's, id: what it attached to }
+    this.written = new Map(); // terminal → its note.job as last written
+    this.watchJobs(cx);
+  }
+
+  // ---- background sessions
+
+  // Claude Code's records of its background sessions: every one once (nothing rings for what
+  // happened before), then each one that changes. Its other files change all the time
+  // (timeline.jsonl, tmp/): only state.json is read.
+  watchJobs(cx) {
+    const root = `${home()}/.claude/jobs`;
+    cx.spawn(async (cx) => {
+      let first = true;
+      while (!this.ended) {
+        let names = null; // all
+        if (!first) {
+          let got;
+          try { got = await watchFolder(root); } catch { await cx.sleep(60000); first = true; continue; } // no folder yet
+          if (this.ended) return;
+          const jobs = got.map((p) => p.split("/.claude/jobs/")[1]);
+          // A batch naming the folder itself means: look at everything. A job's folder alone:
+          // made or deleted.
+          if (!jobs.some((j) => j === undefined || j === "")) {
+            names = [...new Set(jobs.filter((j) => j.endsWith("/state.json") || !j.includes("/")).map((j) => j.split("/")[0]))];
+            if (!names.length) continue;
+          }
+        }
+        try {
+          if (!names) {
+            try { names = await readdir(root); } catch { names = []; }
+            for (const job of [...this.jobs.recs.keys()]) if (!names.includes(job)) this.jobs.read(job, null);
+          }
+          const top = Math.max(0, ...agents().map((a) => a.seq ?? 0)), rings = [];
+          for (const job of names) {
+            if (!/^[0-9a-f]{6,}$/i.test(job)) continue;
+            let r;
+            try { r = JSON.parse((await readTextFile(`${root}/${job}/state.json`)) ?? "null"); } catch { continue; } // half-written: the next change reads it
+            if (this.ended) return;
+            const ring = this.jobs.read(job, r, { first, looking: this.lookingAt(job), top });
+            if (ring) rings.push([job, ring]);
+          }
+          if (first) this.started();
+          first = false;
+          for (const [job, ring] of rings) this.ring(job, ring);
+          this.saveSeen();
+          this.labelJobs();
+        } catch (err) {
+          console.log("my-tabs jobs", String(err?.stack ?? err)); // the watch goes on
+          if (first) this.started();
+          first = false;
+        }
+      }
+    });
+  }
+
+  // Every record read once: from now on changes are news, and labels can be written.
+  started() {
+    this.jobs.settle(this.fresh);
+    this.fresh = false;
+    this.ready = true;
+  }
+
+  saveSeen() {
+    const s = JSON.stringify(this.jobs.seen);
+    if (s !== this.savedSeen) { this.savedSeen = s; localStorage.setItem("jobs.seen", s); }
+  }
+
+  // Which session each `claude attach` pane shows: its foreground program (hc get), asked once
+  // per pane and name (the title without its spinner). Noted as Herdr redraws the bar, which it
+  // does when panes come, go or change title. A pane that stopped showing one loses its label.
+  mapJobs() {
+    const reported = new Set(agents().map((a) => a.pane)), now = new Map();
+    for (const p of panes()) {
+      if (p.terminal && !p.terminal.includes("/") && p.program?.key === "claude" && !reported.has(p.pane)) {
+        now.set(p.terminal, (p.title ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim());
+      }
+    }
+    for (const t of [...this.attached.keys()]) {
+      if (now.has(t)) continue;
+      this.attached.delete(t);
+      if (this.written.get(t)) { this.written.set(t, ""); hc(["label", t, "note.job="]).catch(() => {}); }
+    }
+    for (const [t, name] of now) {
+      const a = this.attached.get(t);
+      if (a && a.name === name) continue;
+      this.attached.set(t, { name, id: a?.id ?? null });
+      hc(["get", t, "--json"]).then((r) => {
+        const cur = this.attached.get(t);
+        if (!cur || this.ended) return;
+        try { cur.id = attachedTo(JSON.parse(r.stdout)?.foreground?.argv); } catch { cur.id = null; }
+        this.labelJobs();
+      }).catch(() => {});
+    }
+  }
+
+  // Each attach pane's label note.job: its session's state as the lists show it ("" removes it).
+  labelJobs() {
+    if (!this.ready) return;
+    let labels = null;
+    for (const [t, a] of this.attached) {
+      const job = this.jobs.find(a.id), want = (job && this.jobs.shown(job)) || "";
+      if (!this.written.has(t)) {
+        labels ??= new Map(terminals().map((x) => [x.address, x.labels ?? {}]));
+        this.written.set(t, labels.get(t)?.["note.job"] ?? "");
+      }
+      if (this.written.get(t) === want) continue;
+      this.written.set(t, want);
+      hc(["label", t, `note.job=${want}`]).then((r) => { if (r.code) this.written.delete(t); }).catch(() => this.written.delete(t));
+    }
+  }
+
+  // The panes showing a session.
+  termsOf(job) {
+    return [...this.attached].filter(([, a]) => this.jobs.find(a.id) === job).map(([t]) => t);
+  }
+
+  // Whether you're looking at a terminal, as Herdr decides it: its window is in front and the
+  // terminal is on screen (in the shown tab, not behind another pane's zoom).
+  looking(terminal) {
+    if (!window()?.active) return false;
+    const all = panes(), p = all.find((x) => x.terminal === terminal), tab = focused()?.tab;
+    return Boolean(p && tab && p.tab === tab && !all.some((x) => x.tab === tab && x.zoomed && x.pane !== p.pane));
+  }
+
+  lookingAt(job) {
+    return this.termsOf(job).some((t) => this.looking(t));
+  }
+
+  // A finished session you're looking at has been seen: it shows idle from now on.
+  lookJobs() {
+    let seen = false;
+    for (const [t, a] of this.attached) {
+      const job = this.jobs.find(a.id);
+      if (job && this.jobs.shown(job) === "done" && this.looking(t)) seen = this.jobs.look(job) || seen;
+    }
+    if (seen) { this.saveSeen(); this.labelJobs(); }
+  }
+
+  // As Herdr tells you an agent needs you or finished (window.rs alert): its sound, and unless
+  // you're looking at it, a toast that takes you there (my-toast names it as the Agents list
+  // does). Only for a session shown in a pane here.
+  ring(job, kind) {
+    const terms = this.termsOf(job);
+    if (!terms.length) return;
+    if (settings()?.sounds?.enabled !== false) playSound(kind);
+    if (terms.some((t) => this.looking(t))) return;
+    const p = panes().find((x) => x.terminal === terms[0]);
+    const space = spaces().find((s) => (s.tabs ?? []).some((x) => x.id === p?.tab));
+    const tab = space?.tabs.find((x) => x.id === p?.tab);
+    notify({
+      title: `${this.jobs.recs.get(job)?.name || "Claude Code"} ${kind === "blocked" ? "needs you" : "finished"}`,
+      ...(space && tab ? { body: `${space.name} / ${tab.name}` } : {}),
+      level: kind === "blocked" ? "error" : "info",
+      action: { name: "agent.focus", args: { terminal: terms[0] } },
+    });
+  }
+
+  // A background session's entry (projects.js withBackground) with its state and ⌘G place from
+  // its record: the label lags a moment behind.
+  withJob(a) {
+    const job = this.jobs.find(this.attached.get(a.address)?.id);
+    return job ? { ...a, status: this.jobs.shown(job) ?? a.status, seq: this.jobs.seq.get(job) ?? 0 } : a;
   }
 
   // The focused pane's terminal (a mod pane has none), noted for ⌃Tab.
@@ -274,8 +453,10 @@ export default class Tabs extends View {
     openOverlay({ mod: "agent-switcher", kind: "window", frame: "none", props: { preview } });
   }
 
+  // Background sessions count too: their ending's place among Herdr's (withJob).
   goWaiting(away) {
-    const a = pickWaiting(agents(), !away);
+    const list = withBackground(agents(), { panes: panes(), spaces: spaces(), terminals: terminals(), keys: agentKeys(shared("new-menu.agents")) });
+    const a = pickWaiting(list.map((x) => this.withJob(x)), !away);
     if (a) run("pane.focus", { pane: a.pane });
     else notify({ title: "No agent is waiting for you", timeout: 2500 });
   }
@@ -626,6 +807,10 @@ export default class Tabs extends View {
     // Herdr redraws the bar when focus moves (it reads focused()): this is where moves are noted.
     this.visit();
     this.track();
+    // And when panes change, or the window comes to the front: which session each attach pane
+    // shows, and which finished one you're looking at now.
+    this.mapJobs();
+    this.lookJobs();
     const { st, project, groups } = this.bar();
     if (this.published !== project) { this.published = project; setShared(SHOWN, { project }); }
     // Each directory's color (the left panel gives most; this one, to directories with no pill):

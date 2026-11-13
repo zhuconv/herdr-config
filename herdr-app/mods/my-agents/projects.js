@@ -273,18 +273,21 @@ export const agentKeys = (menu) => new Set(["claude", "codex", "gemini", "openco
 export const runsAgent = (p, reported, keys) =>
   Boolean(p.terminal && (reported.has(p.pane) || p.program?.agent || keys.has(p.program?.key)));
 
-// What a session that reports no status to Herdr (a background one, `claude attach`) says
-// through the agent-note hook (claude/agent-note): its terminal's label note.state, "working"
-// from a prompt until the reply ends, else "idle"; null without one. labels: the terminal's.
+// The state of a session that reports none to Herdr (a background one, `claude attach`), from
+// its terminal's labels: note.job, which the tab bar sets from Claude Code's own record of the
+// session (mods/my-tabs/jobs.js: "working", "blocked", "done" until you look, "idle"); else
+// note.state from the agent-note hook (claude/agent-note: "working" from a prompt until the
+// reply ends, else "idle"), as on another machine; null without either.
 export const noteStatus = (labels) => {
-  const s = labels?.["note.state"];
+  const job = labels?.["note.job"], s = labels?.["note.state"];
+  if (job === "working" || job === "blocked" || job === "done" || job === "idle") return job;
   return s === "working" || s === "idle" ? s : null;
 };
 
 // The Agents list (mods/my-agents) with background sessions too (`claude attach` to one), which
 // Herdr's agents() leaves out: found by runsAgent, their state from noteStatus (idle without
-// one; never "done" or "needs you": only a reported status says that). Each goes in at its place in space, tab, pane order (the grouped view puts
-// neighbours together); the reported agents keep theirs.
+// one). Each goes in at its place in space, tab, pane order (the grouped view puts neighbours
+// together); the reported agents keep theirs. Their seq is 0: ⌘G (mods/my-tabs) gives them theirs.
 export function withBackground(list, { panes = [], spaces = [], terminals = [], keys = agentKeys() } = {}) {
   const reported = new Map(list.map((a) => [a.pane, a]));
   const extra = panes.filter((p) => !reported.has(p.pane) && runsAgent(p, reported, keys));
