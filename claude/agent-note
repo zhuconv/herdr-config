@@ -7,10 +7,15 @@ Each also sets note.state: "working" from a prompt until the reply ends, then "i
 Agents list, tab bar and Projects panel read it for sessions that report no status to Herdr
 (background ones, `claude attach`). An interrupted reply has no Stop: it stays "working" until
 the next prompt or reply.
+SessionStart: a resumed conversation's card shows its last prompt and reply right away, read
+from its transcript, not only after the next prompt. A new one (or /clear) drops the notes the
+terminal kept from the conversation before.
 All land on the hc terminal the agent runs in ($HC_TERMINAL_ID). A background session runs
-under Claude's daemon, outside any terminal: its labels go on the terminal showing it with
-`claude attach <its id>`, found through hc. Outside hc it does nothing. It prints nothing (a UserPromptSubmit hook's output would join the prompt) and
-always exits 0, so it never gets in Claude's way.
+under Claude's daemon, outside any terminal: its labels go on the terminal showing it, found
+through hc: one running `claude attach <its id>`, else a `claude` window (`claude --resume` on
+a background job) titled with the job's name. Outside hc it does nothing. It prints nothing (a
+UserPromptSubmit or SessionStart hook's output would join the conversation) and always exits
+0, so it never gets in Claude's way.
 
 On a cluster compute node the terminal's hc runs on the login node. There the label goes
 through `ssh <login node>`: $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev session.
@@ -37,27 +42,51 @@ def main():
     elif name == "Stop":
         reply = event.get("last_assistant_message") or last_reply(event.get("transcript_path"))
         key, text, state = "note.said", gist(reply), "idle"
+    elif name == "SessionStart":
+        source, path = event.get("source"), event.get("transcript_path")
+        if source == "resume":
+            prompt, reply = last_prompt(path), gist(last_reply(path))
+            label(term, "note.state=idle", f"note.prompt={prompt}" if prompt else "note.prompt=", f"note.said={reply}" if reply else "note.said=")
+        elif source in ("startup", "clear"):
+            label(term, "note.state=idle", "note.prompt=", "note.said=")
+        return
     else:
         return
     label(term, f"note.state={state}", *([f"{key}={text}"] if text else []))
 
 
 def attached(session):
-    """The local hc terminal running `claude attach <session, or the start of it>`, if any."""
+    """The local hc terminal showing a background session: the one running `claude attach
+    <session, or the start of it>`, else a `claude` window titled with the job's name (as
+    `claude --resume` shows a background job, with the job's id nowhere in its command)."""
     if not session or os.environ.get("HC_VIA") or os.environ.get("SLURM_SUBMIT_HOST"):
         return None
     hc = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
+    name, titled = job_name(session), None
     out = subprocess.run([hc, "ls", "--json"], capture_output=True, text=True, timeout=4).stdout
     for t in json.loads(out or "{}").get("terminals", []):
         address = t.get("address") or ""
         if "/" in address or t.get("state") != "live":
             continue  # another machine's, or ended
-        got = subprocess.run([hc, "get", address, "--json"], capture_output=True, text=True, timeout=4).stdout
-        argv = (json.loads(got or "{}").get("foreground") or {}).get("argv") or []
-        if len(argv) >= 3 and os.path.basename(argv[0]) == "claude" and argv[-2] == "attach" \
-                and len(argv[-1]) >= 6 and session.startswith(argv[-1]):
+        got = json.loads(subprocess.run([hc, "get", address, "--json"], capture_output=True, text=True, timeout=4).stdout or "{}")
+        argv = (got.get("foreground") or {}).get("argv") or []
+        if not argv or os.path.basename(argv[0]) != "claude":
+            continue
+        if len(argv) >= 3 and argv[-2] == "attach" and len(argv[-1]) >= 6 and session.startswith(argv[-1]):
             return address
-    return None
+        if name and titled is None and re.sub(r"^\W+", "", got.get("title") or "").strip() == name:
+            titled = address
+    return titled
+
+
+def job_name(session):
+    """A background job's name, from Claude's record of it (~/.claude/jobs/<its short id>/)."""
+    try:
+        with open(os.path.expanduser(f"~/.claude/jobs/{session[:8]}/state.json")) as f:
+            state = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return (state.get("name") or "").strip() or None if state.get("sessionId") == session else None
 
 
 def label(term, *pairs):
@@ -120,19 +149,40 @@ def gist(reply):
     return head(first, 40) + " …… " + tail(last, 60)
 
 
-def last_reply(path):
-    """The text of the last assistant entry in a transcript (JSON lines), read from its tail."""
+def tail_entries(path):
+    """A transcript's last megabyte (JSON lines), newest first."""
     if not path:
-        return None
+        return []
     with open(path, "rb") as f:
         f.seek(0, os.SEEK_END)
         f.seek(max(0, f.tell() - 1_000_000))
         lines = f.read().decode("utf-8", "replace").splitlines()
     for line in reversed(lines):
         try:
-            entry = json.loads(line)
+            yield json.loads(line)
         except ValueError:
             continue
+
+
+def last_prompt(path):
+    """The start of the last prompt in a transcript: Claude Code records each in a "last-prompt"
+    entry; else the last typed user message (not a tool result, summary or command)."""
+    for entry in tail_entries(path):
+        if entry.get("type") == "last-prompt" and (entry.get("lastPrompt") or "").strip():
+            return " ".join(entry["lastPrompt"].split())[:160]
+        if entry.get("type") == "user" and not (entry.get("isMeta") or entry.get("isCompactSummary") or entry.get("isVisibleInTranscriptOnly")):
+            content = (entry.get("message") or {}).get("content")
+            text = content if isinstance(content, str) else " ".join(
+                b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text")
+            text = " ".join(text.split())
+            if text and not re.match(r"<(command-|local-command|system-reminder)", text):
+                return text[:160]
+    return None
+
+
+def last_reply(path):
+    """The text of the last assistant entry in a transcript (JSON lines), read from its tail."""
+    for entry in tail_entries(path):
         if entry.get("type") != "assistant":
             continue
         content = (entry.get("message") or {}).get("content") or []

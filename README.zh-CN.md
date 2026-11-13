@@ -86,7 +86,7 @@ git pull && ./install.sh
 | `herdr-app/mods/my-agents/` | Agents 列表，显示成 "agent · space"，后台会话也在里面。`projects.js` 和 my-tabs 里的是同一份拷贝 |
 | `herdr-app/mods/agent-deck-*` | Overview 面板，来自 [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
 | `herdr-app/settings.json`、`themes/warp-dracula.json` | 字体、主题、缩放、提示音。`option_as_alt: "on"` 让 Option 在任何输入法下都当 Alt 用：用中文输入法的中文模式时，Herdr 默认把 ⌥1 交给输入法，于是打出字来，而不是切换 project |
-| `claude/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态。`install.sh` 会把它加进 `~/.claude/settings.json` |
+| `claude/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态。用 resume 接回的对话，卡片会马上从对话记录里补上。后台会话的记录写到显示它的终端上：`claude attach <id>`，或者标题是该会话名字的 `claude --resume` 窗口。`install.sh` 会把它加进 `~/.claude/settings.json` |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常是"查找下一个" |
 | `install.sh`、`save.sh`、`paths.sh` | 安装、存回仓库，以及同步哪些文件的清单 |
 | `docs/` | 可点击模型（GitHub Pages 发布）和截图。`index.html` 是设计画布的文件换成示例名字后的版本；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |

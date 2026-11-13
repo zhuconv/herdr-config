@@ -86,7 +86,7 @@ git pull && ./install.sh
 | `herdr-app/mods/my-agents/` | The Agents list, as "agent · space", background sessions included. `projects.js` is the same copy as in my-tabs |
 | `herdr-app/mods/agent-deck-*` | The Overview panel, from [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
 | `herdr-app/settings.json`, `themes/warp-dracula.json` | Font, theme, zoom, sounds. `option_as_alt: "on"` makes Option act as Alt with every input source: with a Chinese input method in Chinese mode, Herdr's default sends ⌥1 to the input method, which types it instead of switching projects |
-| `claude/agent-note` | The Claude Code hook. It keeps the start of your last prompt and the end of the reply for the ⌃Tab cards, and sets `note.state` (working or idle) for background sessions, which report no state to Herdr. `install.sh` adds it to `~/.claude/settings.json` |
+| `claude/agent-note` | The Claude Code hook. It keeps the start of your last prompt and the end of the reply for the ⌃Tab cards, and sets `note.state` (working or idle) for background sessions, which report no state to Herdr. A resumed conversation's card is filled from its transcript right away. A background session's notes go to the terminal showing it: `claude attach <id>`, or a `claude --resume` window titled with the session's name. `install.sh` adds it to `~/.claude/settings.json` |
 | `raycast/` | The Raycast script for ⌘G in any app. `postkey.c` keeps ⌘G as Find Next in VS Code |
 | `install.sh`, `save.sh`, `paths.sh` | Install, save back, and the list of what's synced |
 | `docs/` | The clickable mock (served by GitHub Pages) and the screenshot. `index.html` is the design canvas's file with sample names; `support.js` plays it with [Preact](https://preactjs.com) |
