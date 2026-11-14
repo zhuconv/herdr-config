@@ -16,6 +16,7 @@
 - **在任意机器上新建目录。** project 那一行右边的 **+**（或右键 → New directory…）：选机器、填路径，边输入边提示那台机器上的文件夹（Tab 补全），在那台机器上建好目录、加进这个 project，并在里面开 Claude。
 - **一次只看一个 project 的 tab。** 顶部栏显示当前 project 在所有 space、所有机器上的 tab，按目录分组。一个目录有两个以上 tab 时，前面一个色点、下面一条细线。tab 上只写 agent 的名字，左边的编号就是 ⌘1–⌘9 用的号。
 - **拖动分屏。** 把一个 tab 拖到另一个上面合成分屏（按住 ⌥ 是上下分），拖到边缘是排序。拆回来：把名字从分屏 tab 里拖出来、右键它，或者点窗格标题栏上的按钮。
+- **Fork 一个对话。** 鼠标移到 Claude 窗格的标题栏上，点 Fork：旁边开出这段对话的一个副本，同一台机器、同一个目录，名字是「<名字> (fork)」（用的是 Claude Code 自己的 `--resume <id> --fork-session`）。`claude attach` 打开的后台会话也能 Fork，原来的会话照常进行，不受影响。
 - **后台会话也算。** 用 `claude attach` 打开的会话也出现在面板、tab 栏和 Agents 列表里，状态和前台 agent 一样：工作中、需要你、做完了（看过之前一直显示）。做完或需要你时，弹 Herdr 同样的提示、响同样的声音，⌘G 也能跳过去。状态取自 Claude Code 自己给每个会话记的记录，Mac 上的和服务器上的都算（`./install.sh --remote <机器>` 把 hook 装到服务器上）。
 
 ### 快捷键
@@ -81,7 +82,7 @@ git pull && ./install.sh
 | `herdr-app/mods/my-projects/` | Projects 面板，逻辑在 `model.js`。`optwatch.c` 是个小程序，`install.sh` 把它编译到 `~/.local/bin/herdr-optwatch`：它告诉左栏 ⌥ 有没有按住，也告诉 tab 栏拖到栏下面的拖动什么时候松手，因为 mod 只有拿到键盘焦点才知道修饰键（焦点通常在终端里），鼠标也只有在 mod 上方时才听得到。它只在 Herdr 是前台 app 时运行 |
 | `herdr-app/mods/my-tabs/` | tab 栏，还有 Overview 按钮、关闭后可恢复（`reopen.js`）、⌘G（`waiting.js`）和 ⌃Tab 的顺序（`recent.js`）。`jobs.js` 从 `~/.claude/jobs` 里 Claude Code 的记录得出后台会话（`claude attach`）的状态，是监听文件变化，不是轮询：tab 栏把状态写到会话所在终端的 `note.job` 标签上，其他面板读这个标签；响铃规则和 Herdr 一样。服务器上的会话来自 hook 在那边写的 `note.bg` 标签，从 Herdr 自己的终端列表里读（Herdr 不在前台时不重画，所以那时每 2 秒看一次）。`layoutdoc.js` 合并两个 tab 时，一次改写那台机器的布局，所以出来就是分好屏的样子；Herdr 的命令只能在当前焦点窗格旁边分屏，那样得先单独显示目标 tab。这个布局格式不是公开接口，哪天变了，合并会退回用那些命令。`projects.js` 是 my-projects 的 `model.js` 的拷贝，因为 mod 不能引用别的 mod 的文件 |
 | `herdr-app/mods/agent-switcher/` | ⌃Tab 弹窗：每个窗格一张卡片，agent 显示最近的 prompt 和回复，shell 显示所在目录 |
-| `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带的拷贝）：分屏、全屏、关闭这几个按钮换成一个 Move to new tab，只在分屏里的窗格上出现 |
+| `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带的拷贝）：分屏、全屏、关闭这几个按钮换成两个，鼠标移到标题栏上才出现：Fork，在跑 Claude 的窗格上（fork.js 在那台机器上从 Claude Code 自己的记录里找到它的会话）；Move to new tab，在分屏里的窗格上 |
 | `herdr-app/mods/my-menu/` | 右键菜单（Herdr 自带的拷贝）：分屏里的窗格多一项 Move to new tab；顶部栏里分屏的 tab，每个名字有一项 Move X to new tab |
 | `herdr-app/mods/my-toast/` | 右下角的通知（Herdr 自带的拷贝）：agent 做完或需要你时，提示里用 Agents 列表里的名字（你给 tab 起的名字，否则是会话的名字），而不是“Claude Code”。`projects.js` 同样是 my-projects 的 `model.js` 的拷贝 |
 | `herdr-app/mods/my-agents/` | Agents 列表，显示成 "agent · space"，后台会话也在里面。`projects.js` 和 my-tabs 里的是同一份拷贝 |
