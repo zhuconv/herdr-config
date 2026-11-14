@@ -187,7 +187,7 @@ const MKDIR = 'p=$1\ncase $p in "~") p=$HOME ;; "~/"*) p=$HOME/${p#"~/"} ;; /*) 
 // when the folder isn't there. For the New directory dialog's suggestions.
 const LIST = 'p=$1\ncase $p in "" | "~") p=$HOME ;; "~/"*) p=$HOME/${p#"~/"} ;; /*) ;; *) p=$HOME/$p ;; esac\ncd "$p" 2>/dev/null || { echo "?"; exit 0; }\nls -1ApL 2>/dev/null | grep "/$" | head -2000';
 const LOADING = "loading", MISSING = "missing", FAILED = "failed";
-const SUGGEST = 6; // suggestions shown
+const ROWS = 6; // path suggestions in view at once: the list holds every match and scrolls
 const NEWDIR_KEYS = "MyProjectsNewDir"; // the dialog's key context: its Tab, ↑ and ↓
 
 // Picking a project (null: Unsorted) shows its tabs in the tab bar: its last-used pane gets
@@ -219,9 +219,9 @@ const openBlank = () => popup({ role: "blank" }, 200, 10 + 30 + 9 + 30 + 30);
 const openNew = (dir = null) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "new", dir } });
 const openRename = (project) => openOverlay({ mod: MOD, kind: "dialog", width: 380, height: 214, props: { role: "rename", project } });
 // The New directory dialog: a row of machines (about six fit; more wrap onto another row) and
-// room for SUGGEST path suggestions.
+// room for ROWS path suggestions.
 const openNewDir = (project) => openOverlay({ mod: MOD, kind: "dialog", width: 420,
-  height: 296 + SUGGEST * 26 + 32 * (Math.ceil((1 + (shared(MACHINES) ?? []).length) / 6) - 1), props: { role: "newdir", project } });
+  height: 296 + ROWS * 26 + 32 * (Math.ceil((1 + (shared(MACHINES) ?? []).length) / 6) - 1), props: { role: "newdir", project } });
 // Deleting goes through Herdr's own confirm dialog, which runs "my-projects.delete <name>".
 function askDelete(name) {
   const n = projectsNow().projects.find((p) => p.name === name)?.pills.length ?? 0;
@@ -754,8 +754,9 @@ class Popup {
       // MISSING, FAILED), and which one is highlighted (Tab takes it).
       this.dirs = new Map();
       this.sel = 0;
+      this.listScroll = ScrollHandle.new(); // the suggestions: every matching folder, ROWS in view
       this.input = InputState.new({ placeholder: "~/new-directory" });
-      this.input.on("change", (_e, cx) => { this.error = null; this.sel = 0; this.refresh(cx); cx.notify(); });
+      this.input.on("change", (_e, cx) => { this.error = null; this.select(0); this.refresh(cx); cx.notify(); });
       // Enter: the path as typed, suggestions or not.
       this.input.on("submit", (_e, cx) => this.makeDir(cx));
       this.input.focus();
@@ -828,10 +829,16 @@ class Popup {
     });
   }
 
-  // The folders there that start with the name being typed (model.js matchDirs).
+  // The folders there that start with the name being typed (model.js matchDirs), all of them.
   suggestions() {
     const got = this.dirs.get(this.listKey());
-    return Array.isArray(got) ? matchDirs(got, splitTyped(this.input.value()).prefix, SUGGEST) : [];
+    return Array.isArray(got) ? matchDirs(got, splitTyped(this.input.value()).prefix, Infinity) : [];
+  }
+
+  // Highlights a suggestion and scrolls the list to it.
+  select(i) {
+    this.sel = i;
+    this.listScroll.scroll_to_item(i);
   }
 
   // Tab, or a click on a suggestion: the highlighted folder replaces the name being typed, with
@@ -843,16 +850,16 @@ class Popup {
     this.input.set_value(next);
     this.input.set_selected_range({ start: next.length, end: next.length });
     this.input.focus();
-    this.sel = 0;
+    this.select(0);
     this.error = null;
     this.refresh(cx);
     cx.notify();
   }
 
-  // ↑ / ↓: the highlight moves through the suggestions.
+  // ↑ / ↓: the highlight moves through the suggestions, and the list follows it.
   step(cx, d) {
     const n = this.suggestions().length;
-    if (n) { this.sel = (Math.min(this.sel, n - 1) + d + n) % n; cx.notify(); }
+    if (n) { this.select((Math.min(this.sel, n - 1) + d + n) % n); cx.notify(); }
   }
 
   // What the suggestion list says when it has none.
@@ -979,7 +986,7 @@ class Popup {
       return div().id(`nd-${m ?? "local"}`).h(26).px(10).flex().flex_none().items_center().rounded(13).border_1()
         .border_color(on ? ringColor(t) : t.input).bg(on ? t.selected : t.raised).text_size(12)
         .text_color(on ? t.foreground : t.muted).cursor_pointer().when(!on, (el) => el.hover((s) => s.bg(t.hover)))
-        .on_click((_e, cx) => { this.on = m; this.error = null; this.sel = 0; this.refresh(cx); this.input.focus(); cx.notify(); })
+        .on_click((_e, cx) => { this.on = m; this.error = null; this.select(0); this.refresh(cx); this.input.focus(); cx.notify(); })
         .child(m ?? "local");
     };
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
@@ -1009,7 +1016,7 @@ class Popup {
       .child(h_flex().flex_wrap().gap(6).children([null, ...names].map(chip)))
       .child(label("Path"))
       .child(Input.new(this.input).h(36).px(10).rounded(9).border_1().border_color(ringColor(t)).bg(t.background).text_size(12.8).text_color(t.foreground))
-      .child(v_flex().id("nd-list").mt(6).h(SUGGEST * 26).flex_none().overflow_hidden()
+      .child(v_flex().id("nd-list").mt(6).h(ROWS * 26).flex_none().overflow_y_scrollbar().track_scroll(this.listScroll)
         .when(list.length > 0, (el) => el.children(list.map(row)))
         .when(!list.length, (el) => el.child(div().px(10).pt(5).text_size(12).text_color(t.dim).child(this.emptyText()))))
       .child(div().pt(6).text_size(11.5).text_color(this.error ? t.blocked : t.dim).child(this.error ?? hint))
