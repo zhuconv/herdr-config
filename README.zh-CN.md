@@ -79,13 +79,14 @@ git pull && ./install.sh
 | 位置 | 内容 |
 |---|---|
 | `herdr-app/keys.json` | 上面那些快捷键 |
-| `herdr-app/layouts/my-main.json` | 布局 my-main：灰蓝色焦点框；左栏上面 my-projects、下面 my-agents；窗格标题栏用 my-pane，右键菜单用 my-menu |
+| `herdr-app/layouts/my-main.json` | 布局 my-main：灰蓝色焦点框；左栏最上面一条用 my-chrome，往下是 my-projects、my-agents；窗格标题栏用 my-pane，右键菜单用 my-menu |
 | `herdr-app/mods/my-projects/` | Projects 面板，逻辑在 `model.js`。`optwatch.c` 是个小程序，`install.sh` 把它编译到 `~/.local/bin/herdr-optwatch`：它告诉左栏 ⌥ 有没有按住，也告诉 tab 栏拖到栏下面的拖动什么时候松手，因为 mod 只有拿到键盘焦点才知道修饰键（焦点通常在终端里），鼠标也只有在 mod 上方时才听得到。它只在 Herdr 是前台 app 时运行 |
 | `herdr-app/mods/my-tabs/` | tab 栏，还有 Overview 按钮、关闭后可恢复（`reopen.js`）、⌘G（`waiting.js`）和 ⌃Tab 的顺序（`recent.js`）。`jobs.js` 从 `~/.claude/jobs` 里 Claude Code 的记录得出后台会话（`claude attach`）的状态，是监听文件变化，不是轮询：tab 栏把状态写到会话所在终端的 `note.job` 标签上，其他面板读这个标签；响铃规则和 Herdr 一样。服务器上的会话来自 hook 在那边写的 `note.bg` 标签，从 Herdr 自己的终端列表里读（Herdr 不在前台时不重画，所以那时每 2 秒看一次）。`layoutdoc.js` 合并两个 tab 时，一次改写那台机器的布局，所以出来就是分好屏的样子；Herdr 的命令只能在当前焦点窗格旁边分屏，那样得先单独显示目标 tab。这个布局格式不是公开接口，哪天变了，合并会退回用那些命令。`projects.js` 是 my-projects 的 `model.js` 的拷贝，因为 mod 不能引用别的 mod 的文件 |
 | `herdr-app/mods/agent-switcher/` | ⌃Tab 弹窗：每个窗格一张卡片，agent 显示最近的 prompt 和回复，shell 显示所在目录 |
 | `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带的拷贝）：分屏、全屏、关闭这几个按钮换成两个，鼠标移到标题栏上才出现：Fork，在跑 Claude 的窗格上（fork.js 在那台机器上从 Claude Code 自己的记录里找到它的会话；跑在计算节点上的 Claude 则看 hook 写的标签，副本经 ssh 开在那个节点上）；Move to new tab，在分屏里的窗格上 |
 | `herdr-app/mods/my-menu/` | 右键菜单（Herdr 自带的拷贝）：分屏里的窗格多一项 Move to new tab；顶部栏里分屏的 tab，每个名字有一项 Move X to new tab |
 | `herdr-app/mods/my-toast/` | 右下角的通知（Herdr 自带的拷贝）：agent 做完或需要你时，提示里用 Agents 列表里的名字（你给 tab 起的名字，否则是会话的名字），而不是“Claude Code”。`projects.js` 同样是 my-projects 的 `model.js` 的拷贝 |
+| `herdr-app/mods/my-chrome/` | 左栏最上面那一条（Herdr 自带的拷贝），去掉了 Herdr 的图标和名字：左边留给窗口的三个按钮，右边是搜索和收起左栏 |
 | `herdr-app/mods/my-agents/` | Agents 列表，显示成 "agent · space"，后台会话也在里面。`projects.js` 和 my-tabs 里的是同一份拷贝 |
 | `herdr-app/mods/agent-deck-*` | Overview 面板，来自 [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
 | `herdr-app/settings.json`、`themes/warp-dracula.json` | 字体、主题、缩放、提示音。`option_as_alt: "on"` 让 Option 在任何输入法下都当 Alt 用：用中文输入法的中文模式时，Herdr 默认把 ⌥1 交给输入法，于是打出字来，而不是切换 project |
