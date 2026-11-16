@@ -127,10 +127,10 @@ export function addDir(state, key, to) {
   return !target || (target.dirs ?? []).includes(key) ? state : moveDir(state, key, to);
 }
 
-// Machines whose shells are on a TACC login node, where an agent must not run (it runs inside
-// idev, on a compute node): Vista's, one machine per account (Claude hangs or is killed there),
-// and Horizon's. Starting work in a directory there opens a plain terminal instead.
-export const LOGIN_NODES = ["vista", "vista2", "vista3", "horizon"];
+// Machines whose shells are on a login node where an agent must not run: Vista's (one machine
+// per account), where Claude hangs or is killed (it runs inside idev, on a compute node).
+// Starting work in a directory there opens a plain terminal instead.
+export const LOGIN_NODES = ["vista", "vista2", "vista3"];
 export const agentsRunOn = (machine) => !LOGIN_NODES.includes(machine ?? "");
 
 // New directory…'s path suggestions. The typed path as the folder it's in (as typed, up to its
