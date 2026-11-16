@@ -4,15 +4,15 @@
 // the terminal's title, the folder, and the agent's status. Props from the app:
 // { pane, terminal }. Click: focus the pane.
 // my-pane (a clone of Herdr's pane 0.1.15): instead of split, zoom and close, two buttons, on
-// hover. Fork, for a pane running Claude: a copy of its conversation, started beside it
-// (fork.js). Move to new tab, for a pane of a split: it gets a tab of its own (mods/my-tabs
-// "split-out", which the tab bar's drags and right-click menus use too). Keys and the
-// right-click menu still split, zoom and close.
+// hover. Fork, for a pane running Claude (or showing one on a compute node, through ssh): a
+// copy of its conversation, started beside it (fork.js). Move to new tab, for a pane of a
+// split: it gets a tab of its own (mods/my-tabs "split-out", which the tab bar's drags and
+// right-click menus use too). Keys and the right-click menu still split, zoom and close.
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { panes, props, run, theme, home, layout, hc, exec, notify } from "herdr";
-import { claudeIn, FIND, pick, forkArgv } from "./fork.js";
+import { claudeIn, FIND, pick, forkArgv, elsewhere, remoteArgv } from "./fork.js";
 
 // Match the first visible tab frame, including the active child of a stack.
 function paneFrame(node) {
@@ -47,18 +47,32 @@ const machineOf = (address) => {
 };
 
 // Starts a copy of the conversation the pane shows, to its right, in the session's folder on
-// its machine. null when it started, else why not.
+// its machine, or on the host its Claude runs on. null when it started, else why not.
 async function startFork(p) {
   const got = JSON.parse((await hc(["get", p.terminal, "--json"])).stdout || "{}");
   const fg = got.foreground ?? {};
+  const on = machineOf(p.terminal);
   const want = claudeIn(fg.argv);
-  if (!want || !fg.pid) return "Claude isn't running in this pane.";
-  const r = await exec("/bin/sh", ["-c", FIND, "sh", String(fg.pid), want.attach ?? ""], { on: machineOf(p.terminal), timeout: 15000 });
-  const found = pick(r.stdout, want.attach);
-  if (!found) return "Claude Code has no record of the conversation in this pane.";
-  const dir = found.cwd ?? p.cwd;
+  if (want && fg.pid) {
+    const r = await exec("/bin/sh", ["-c", FIND, "sh", String(fg.pid), want.attach ?? ""], { on, timeout: 15000 });
+    const found = pick(r.stdout, want.attach);
+    if (!found) return "Claude Code has no record of the conversation in this pane.";
+    return openBeside(p, forkArgv(found), found.cwd ?? p.cwd);
+  }
+  // The pane's program isn't Claude: its Claude may run on another host, a compute node the
+  // pane reaches through ssh or idev, as the hook says. Never here: on a cluster this machine is
+  // the login node. Its name and folder from Claude's record of it, which the cluster's shared
+  // home shows here too (else the hook's folder, and no name).
+  const away = elsewhere(got.labels);
+  if (!away) return "Claude isn't running in this pane.";
+  const r = await exec("/bin/sh", ["-c", FIND, "sh", "", "", away.session], { on, timeout: 15000 });
+  const found = pick(r.stdout, away.session) ?? { session: away.session, cwd: null, name: null };
+  return openBeside(p, remoteArgv(away.host, { ...found, cwd: found.cwd ?? away.cwd }), p.cwd);
+}
+
+function openBeside(p, argv, dir) {
   run("pane.focus", { pane: p.pane });
-  run("terminal.open", { argv: forkArgv(found), place: "right", ...(dir ? { folder: dir } : {}) });
+  run("terminal.open", { argv, place: "right", ...(dir ? { folder: dir } : {}) });
   return null;
 }
 

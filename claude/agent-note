@@ -8,9 +8,13 @@ Agents list, tab bar and Projects panel read it for sessions that report no stat
 (background ones, `claude attach`) when the tab bar's own label from Claude's record of the
 session (note.job, mods/my-tabs/jobs.js) isn't there. An interrupted reply has no Stop: it stays
 "working" until the next prompt or reply.
-SessionStart: a resumed conversation's card shows its last prompt and reply right away, read
-from its transcript, not only after the next prompt. A new one (or /clear) drops the notes the
-terminal kept from the conversation before.
+SessionStart: a resumed conversation's card (or a fork's, a copy of one) shows its last prompt
+and reply right away, read from its transcript, not only after the next prompt. A new one (or
+/clear) drops the notes the terminal kept from the conversation before.
+Each also says where the conversation is, for Herdr's Fork button (mods/my-pane/fork.js), which
+starts a copy of it: note.session (its id), note.cwd (its folder) and note.host, the host Claude
+runs on when that isn't the terminal's own (a compute node, see below; dropped otherwise). Fork
+reaches that host with ssh from the terminal's machine.
 All land on the hc terminal the agent runs in ($HC_TERMINAL_ID). A background session runs
 under Claude's daemon ($CLAUDE_JOB_DIR), outside any terminal; the $HC_TERMINAL_ID it has is the
 daemon's, from whichever terminal started the daemon. Its labels go on every terminal showing
@@ -56,7 +60,7 @@ def main():
         key, text, state = "note.said", gist(reply), "idle"
     elif name == "SessionStart":
         source, path = event.get("source"), event.get("transcript_path")
-        if source == "resume":
+        if source in ("resume", "fork"):
             prompt, reply = last_prompt(path), gist(last_reply(path))
             pairs = ("note.state=idle", f"note.prompt={prompt}" if prompt else "note.prompt=", f"note.said={reply}" if reply else "note.said=")
         elif source in ("startup", "clear"):
@@ -69,6 +73,7 @@ def main():
         pairs = (f"note.state={state}", *([f"{key}={text}"] if text else []))
         if report and name == "UserPromptSubmit":
             pairs += (f"note.bg=working {os.path.basename(job.rstrip('/'))} {now()}",)
+    pairs += where(event)
     for term in terms:
         label(term, *pairs)
     if report and name == "Stop":
@@ -152,11 +157,25 @@ def job_name(session):
     return (state.get("name") or "").strip() or None if state.get("sessionId") == session else None
 
 
+def via():
+    """The login node whose hc runs the terminal, when Claude runs on another host (a cluster
+    compute node): $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev session. None on that host."""
+    v = (os.environ.get("HC_VIA") or os.environ.get("SLURM_SUBMIT_HOST") or "").split(".")[0]
+    return v if v and v != socket.gethostname().split(".")[0] else None
+
+
+def where(event):
+    """note.session, note.cwd and note.host: what Herdr's Fork needs to start a copy of the
+    conversation. note.host is empty (the label dropped) unless Claude runs on another host."""
+    host = socket.gethostname().split(".")[0] if via() else ""
+    return (f"note.session={event.get('session_id') or ''}", f"note.cwd={event.get('cwd') or ''}", f"note.host={host}")
+
+
 def label(term, *pairs):
-    via = (os.environ.get("HC_VIA") or os.environ.get("SLURM_SUBMIT_HOST") or "").split(".")[0]
-    if via and via != socket.gethostname().split(".")[0]:
+    login = via()
+    if login:
         remote = "~/.local/bin/hc label " + " ".join(shlex.quote(x) for x in (term, *pairs))
-        subprocess.run(["ssh", "-o", "ConnectTimeout=8", via, remote],
+        subprocess.run(["ssh", "-o", "ConnectTimeout=8", login, remote],
                        stdin=subprocess.DEVNULL, capture_output=True, timeout=12)
     else:
         hc = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
@@ -213,13 +232,15 @@ def gist(reply):
 
 
 def tail_entries(path):
-    """A transcript's last megabyte (JSON lines), newest first."""
-    if not path:
-        return []
-    with open(path, "rb") as f:
-        f.seek(0, os.SEEK_END)
-        f.seek(max(0, f.tell() - 1_000_000))
-        lines = f.read().decode("utf-8", "replace").splitlines()
+    """A transcript's last megabyte (JSON lines), newest first; nothing when it isn't there (yet:
+    a fork's, at its start)."""
+    try:
+        with open(path or "", "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - 1_000_000))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except OSError:
+        return
     for line in reversed(lines):
         try:
             yield json.loads(line)
