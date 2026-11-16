@@ -1,5 +1,5 @@
-"""Adds the agent-note hook (UserPromptSubmit, Stop and SessionStart) to ~/.claude/settings.json,
-once per event.
+"""Adds the agent-note hook (UserPromptSubmit, Stop, SessionStart and PreCompact) to
+~/.claude/settings.json, once per event.
 
 install.sh runs it here, and on another machine through `hc exec --on <m> -i python3 -`.
 Before changing the file it leaves a copy next to it (settings.json.bak-<time>).
@@ -20,7 +20,7 @@ except FileNotFoundError:
 hook = {"type": "command", "command": '"$HOME/.local/bin/agent-note"', "timeout": 15, "async": True}
 hooks = settings.setdefault("hooks", {})
 added = []
-for event in ("UserPromptSubmit", "Stop", "SessionStart"):
+for event in ("UserPromptSubmit", "Stop", "SessionStart", "PreCompact"):
     groups = hooks.setdefault(event, [])
     if not any("agent-note" in (h.get("command") or "") for g in groups for h in g.get("hooks", [])):
         groups.append({"hooks": [dict(hook)]})

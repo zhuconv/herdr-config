@@ -43,7 +43,8 @@ for item in "${ITEMS[@]}"; do
 done
 chmod +x "$HOME/.local/bin/agent-note"
 
-# Claude Code: run agent-note on UserPromptSubmit, Stop and SessionStart (added once, never twice).
+# Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart and PreCompact (added once,
+# never twice).
 python3 claude/merge-hooks.py
 
 # Small C helpers. The Command Line Tools' default SDK can be newer than its compiler; then an

@@ -29,10 +29,23 @@ background sessions (mods/my-tabs/jobs.js). "<state> <job> <time>": working from
 the end of a turn, how Claude recorded it ended (done, blocked, or still working when it waits
 on its own task), read from ~/.claude/jobs/<job>/state.json once Claude has written it.
 
+A compaction between turns (PreCompact; SessionStart after it, in case that came too late):
+Claude reports it to the terminal like a turn, working and then done, and Herdr alerts you
+for that done as for a finished turn. That is Claude's own compaction while idle (a long
+conversation, about an hour after its last reply, before the prompt cache expires) and
+/compact. So once Claude says working, the status is cleared (OSC 7501 state=clear, written
+to Claude's terminal): Herdr takes a done that doesn't follow working as one you've seen, so
+there's no sound, toast or done mark. Only when you've seen the last finish (herdr.seen at the
+terminal's turn count). One you haven't seen keeps its mark and alerts again. A compaction
+in the middle of a turn (the context filled up) reports nothing of its own and is left
+alone. A prompt sent during the compaction runs right after it, and Claude doesn't say
+working again, so the next UserPromptSubmit says it for Claude if the status is still cleared.
+
 On a cluster compute node the terminal's hc runs on the login node. There the label goes
 through `ssh <login node>`: $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev session.
 (Vista: plain ssh from a node to login1 needs no MFA; BatchMode=yes would break it.)
 """
+import base64
 import json
 import os
 import re
@@ -41,6 +54,7 @@ import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime, timezone
 
@@ -48,10 +62,19 @@ from datetime import datetime, timezone
 def main():
     event = json.load(sys.stdin)
     job, own = os.environ.get("CLAUDE_JOB_DIR"), os.environ.get("HC_TERMINAL_ID")
+    name = event.get("hook_event_name")
+    if name == "PreCompact" or (name == "SessionStart" and event.get("source") == "compact"):
+        if own and not job and (event.get("trigger") == "manual" or between_turns(event.get("transcript_path"), after=name == "SessionStart")):
+            hush(own, wait=8.0 if name == "PreCompact" else 0)
+        return
+    if name == "UserPromptSubmit" and own and not job:
+        try:
+            unhush(own)
+        except Exception:
+            pass  # the labels below still go on
     terms = [own] if own and not job else attached(event.get("session_id"))
     if not terms:
         return
-    name = event.get("hook_event_name")
     report = bool(job) and not os.path.isdir(os.path.expanduser("~/.config/herdr-app"))
     if name == "UserPromptSubmit":
         key, text, state = "note.prompt", " ".join((event.get("prompt") or "").split())[:160], "working"
@@ -171,15 +194,145 @@ def where(event):
     return (f"note.session={event.get('session_id') or ''}", f"note.cwd={event.get('cwd') or ''}", f"note.host={host}")
 
 
-def label(term, *pairs):
+def hc(*args):
+    """Runs hc where the terminal's hc is (here, or the login node through ssh); its output."""
     login = via()
     if login:
-        remote = "~/.local/bin/hc label " + " ".join(shlex.quote(x) for x in (term, *pairs))
-        subprocess.run(["ssh", "-o", "ConnectTimeout=8", login, remote],
-                       stdin=subprocess.DEVNULL, capture_output=True, timeout=12)
+        remote = "~/.local/bin/hc " + " ".join(shlex.quote(x) for x in args)
+        return subprocess.run(["ssh", "-o", "ConnectTimeout=8", login, remote],
+                              stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=12).stdout
+    path = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
+    return subprocess.run([path, *args], capture_output=True, text=True, timeout=4).stdout
+
+
+def label(term, *pairs):
+    hc("label", term, *pairs)
+
+
+def terminal(term):
+    """hc's record of the terminal: its status (what Claude last reported), turn and labels."""
+    try:
+        got = json.loads(hc("get", term, "--json") or "null")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return got if isinstance(got, dict) else None
+
+
+TURN_ENDS = ("turn_duration", "stop_hook_summary", "away_summary", "compact_boundary")
+
+
+def between_turns(path, after=False):
+    """Whether a compaction started with no turn running: the transcript's last turn had ended
+    (or was interrupted), and no prompt or tool call came after it. Local commands (/model,
+    /compact itself) don't start turns. after: read from before the boundary this compaction
+    just wrote."""
+    local = False
+    for entry in tail_entries(path):
+        kind = entry.get("type")
+        if after:
+            after = not (kind == "system" and entry.get("subtype") == "compact_boundary")
+            continue
+        if kind == "system":
+            if entry.get("subtype") in TURN_ENDS:
+                return True
+            continue
+        if kind == "assistant":
+            return False
+        if kind != "user" or entry.get("isMeta") or entry.get("isCompactSummary") or entry.get("isVisibleInTranscriptOnly"):
+            continue
+        content = (entry.get("message") or {}).get("content")
+        if isinstance(content, list) and any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return False
+        text = (content if isinstance(content, str) else " ".join(
+            b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text")).strip()
+        if text.startswith(("<local-command-stdout>", "<local-command-stderr>")):
+            local = True
+        elif text.startswith(("<command-name>", "<command-message>")) and local:
+            local = False  # a local command's own line
+        else:
+            return text.startswith("[Request interrupted by user")
+    return False
+
+
+def claude_tty():
+    """Claude's terminal, open for writing: the hook's own, else that of the first process up
+    the tree that has one. None when there's none."""
+    try:
+        return os.open("/dev/tty", os.O_WRONLY | os.O_NOCTTY)
+    except OSError:
+        pass
+    pid = os.getppid()
+    for _ in range(4):
+        out = subprocess.run(["ps", "-o", "ppid=,tty=", "-p", str(pid)], capture_output=True, text=True, timeout=3).stdout.split()
+        if len(out) < 2:
+            return None
+        if out[1] not in ("?", "??", "-"):
+            try:
+                return os.open(out[1] if out[1].startswith("/") else "/dev/" + out[1], os.O_WRONLY | os.O_NOCTTY)
+            except OSError:
+                return None
+        pid = int(out[0])
+    return None
+
+
+def status(fields):
+    """An OSC 7501 record, as Claude writes them to its terminal."""
+    tty = claude_tty()
+    if tty is None:
+        return False
+    try:
+        os.write(tty, b"\x1b]7501;" + fields.encode() + b"\x07")
+    finally:
+        os.close(tty)
+    return True
+
+
+def hushed(term):
+    """Where hush notes that it cleared the terminal's status (and the title it had)."""
+    return os.path.join(tempfile.gettempdir(), f"agent-note-{os.getuid()}", "hushed-" + term.replace("/", "_"))
+
+
+def hush(term, wait):
+    """A compaction between turns: once Claude says working (up to wait seconds), clear the
+    terminal's status, so its done comes after no working and Herdr takes it as seen. Only when
+    the last finish was seen; herdr.seen moves to the turn count the clearing makes."""
+    end = time.time() + wait
+    while True:
+        t = terminal(term)
+        state = ((t or {}).get("status") or {}).get("state")
+        if state == "working" or time.time() >= end:
+            break
+        time.sleep(1.0 if via() else 0.4)
+    if state != "working":
+        return
+    try:
+        turn, seen = int(t.get("turn") or 0), int((t.get("labels") or {}).get("herdr.seen"))
+    except (TypeError, ValueError):
+        return
+    if seen < turn:
+        return  # a finish you haven't looked at: it keeps its mark
+    os.makedirs(os.path.dirname(hushed(term)), exist_ok=True)
+    with open(hushed(term), "w") as f:
+        json.dump({"title": (t.get("status") or {}).get("title") or ""}, f)
+    if status("state=clear"):
+        label(term, f"herdr.seen={turn + 1}")  # leaving working counts a turn
     else:
-        hc = shutil.which("hc") or os.path.expanduser("~/.local/bin/hc")
-        subprocess.run([hc, "label", term, *pairs], capture_output=True, timeout=4)
+        os.remove(hushed(term))
+
+
+def unhush(term):
+    """A prompt after a hushed compaction: if the status is still cleared (the prompt was sent
+    during the compaction, and Claude, working all along, says nothing new), say working."""
+    try:
+        with open(hushed(term)) as f:
+            was = json.load(f)
+        os.remove(hushed(term))
+    except (OSError, ValueError):
+        return
+    t = terminal(term)
+    if t is not None and not t.get("status"):
+        title = base64.b64encode(str(was.get("title") or "").encode()).decode()
+        status("state=working:app=claude-code" + (f":title={title}" if title else ""))
 
 
 CJK = re.compile(r"[\u2e80-\u9fff\uff00-\uffef]")

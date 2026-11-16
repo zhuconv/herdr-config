@@ -18,6 +18,7 @@
 - **拖动分屏。** 把一个 tab 拖到另一个上面合成分屏（按住 ⌥ 是上下分），拖到边缘是排序。拆回来：把名字从分屏 tab 里拖出来、右键它，或者点窗格标题栏上的按钮。
 - **Fork 一个对话。** 鼠标移到 Claude 窗格的标题栏上，点 Fork：旁边开出这段对话的一个副本，同一台机器、同一个目录，名字是「<名字> (fork)」（用的是 Claude Code 自己的 `--resume <id> --fork-session`）。`claude attach` 打开的后台会话也能 Fork，原来的会话照常进行，不受影响。在 Slurm 集群上，跑在计算节点上的 Claude（窗格经 ssh 或 idev 连过去的）也能 Fork，副本开在那个计算节点上：新窗格在 login 节点上，只负责 ssh 过去，Claude 不会跑在 login 节点上。
 - **后台会话也算。** 用 `claude attach` 打开的会话也出现在面板、tab 栏和 Agents 列表里，状态和前台 agent 一样：工作中、需要你、做完了（看过之前一直显示）。做完或需要你时，弹 Herdr 同样的提示、响同样的声音，⌘G 也能跳过去。状态取自 Claude Code 自己给每个会话记的记录，Mac 上的和服务器上的都算（`./install.sh --remote <机器>` 把 hook 装到服务器上）。
+- **压缩对话不提醒。** Claude 在两个回合之间压缩对话时，会当成一个回合做完来报告。这包括它在空闲时自己做的压缩（长对话在最后一次回复约一小时后、prompt 缓存过期之前），也包括 `/compact`，所以 Herdr 会当成这个会话又做完了一次来提醒你。hook 在压缩开始时清掉窗格的状态，Herdr 就把压缩结束当成已经看过：不响声音、不弹提示，也不显示“做完了”。还没看过的完成照样保留标记。
 
 ### 快捷键
 
@@ -88,7 +89,7 @@ git pull && ./install.sh
 | `herdr-app/mods/my-agents/` | Agents 列表，显示成 "agent · space"，后台会话也在里面。`projects.js` 和 my-tabs 里的是同一份拷贝 |
 | `herdr-app/mods/agent-deck-*` | Overview 面板，来自 [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
 | `herdr-app/settings.json`、`themes/warp-dracula.json` | 字体、主题、缩放、提示音。`option_as_alt: "on"` 让 Option 在任何输入法下都当 Alt 用：用中文输入法的中文模式时，Herdr 默认把 ⌥1 交给输入法，于是打出字来，而不是切换 project |
-| `claude/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态；Herdr 没在看它们的记录时用这个兜底。在服务器上它还写 `note.bg`：Claude 记下的这个回合怎么结束的，给 Mac 上的 tab 栏用。用 resume 接回的对话，卡片会马上从对话记录里补上。后台会话的记录写到每个显示它的终端上：`claude attach <id>`，或者标题是该会话名字的 `claude --resume` 窗口。（它带的 `$HC_TERMINAL_ID` 是后台服务的，所以不用。）它还给每个窗格标上对话在哪，给 Fork 用：`note.session`、`note.cwd`，Claude 跑在别的主机（比如计算节点）上时还有 `note.host`。`install.sh` 会把它加进 `~/.claude/settings.json` |
+| `claude/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态；Herdr 没在看它们的记录时用这个兜底。在服务器上它还写 `note.bg`：Claude 记下的这个回合怎么结束的，给 Mac 上的 tab 栏用。用 resume 接回的对话，卡片会马上从对话记录里补上。后台会话的记录写到每个显示它的终端上：`claude attach <id>`，或者标题是该会话名字的 `claude --resume` 窗口。（它带的 `$HC_TERMINAL_ID` 是后台服务的，所以不用。）它还给每个窗格标上对话在哪，给 Fork 用：`note.session`、`note.cwd`，Claude 跑在别的主机（比如计算节点）上时还有 `note.host`。两个回合之间的压缩也由它处理（见上）：PreCompact 时，等 Claude 报告压缩“工作中”后，它清掉窗格的状态（OSC 7501 `state=clear`）。`install.sh` 会把它加进 `~/.claude/settings.json` |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常是"查找下一个" |
 | `install.sh`、`save.sh`、`paths.sh` | 安装、存回仓库，以及同步哪些文件的清单 |
 | `docs/` | 可点击模型（GitHub Pages 发布）和截图。`index.html` 是设计画布的文件换成示例名字后的版本；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |
