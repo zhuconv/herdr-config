@@ -47,7 +47,7 @@ const machineOf = (address) => {
 };
 
 // Where a pane's terminal runs: its folder (home as ~), after its machine when that's another
-// one ("a5k · ~"): a worker kept as a tab sits with its starter, whose folder its tab shows. Another
+// one ("gpu1 · ~"): a worker kept as a tab sits with its starter, whose folder its tab shows. Another
 // machine's home is guessed as the left panel does (/home/<user>, /Users/<user>, TACC's
 // /home1/<group>/<user>).
 function where(p) {
