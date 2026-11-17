@@ -10,8 +10,9 @@ Codex runs a hook only once you trust it, and asks at its start until you do ("H
 review"), which would hold up a Codex that a relay or a manager starts. So this trusts them too,
 as Codex's Trust all would: config.toml's [hooks.state."<hooks.json>:<event>:<group>:<hook>"]
 trusted_hash. Codex hashes the hook's definition (not its path, nor agent-note's code); the
-hashes below are what Codex 0.169 gives the definitions this writes. Change those and Codex asks
-again: trust them in a throwaway CODEX_HOME and copy the new hashes here.
+hashes below are what Codex 0.169 gives the definitions this writes. Where they don't match (a
+changed definition, another Codex), codex-hooks-trust, which install.sh runs next, asks the
+installed Codex and writes its own.
 """
 import json
 import os

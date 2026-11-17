@@ -49,7 +49,7 @@ hc's own manual is `hc --skill`. Where it differs from this skill, this skill wi
    ${rules//MANAGER/$me}"
    hc run --bg --on <machine> --cwd <folder> --name <name> --outlive-parent --label worker.manager="$me" \
      -- claude --permission-mode auto "$task" | jq -r .address
-   # Codex: … -- codex "$task"
+   # Codex: … -- codex --no-daemon "$task"   (its own session, so Herdr's hook knows its terminal)
    ```
 
    - It prints the worker's address.

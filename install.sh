@@ -6,11 +6,34 @@
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
 #
 #   ./install.sh --remote <machine>   (a machine from `hc machine ls`)
-# puts the hook on that machine, so Claude sessions running there in Herdr terminals fill
-# their ⌃Tab cards too (and Codex ones run --no-daemon), and the hc-workers skill, so an agent
-# there can be a manager. It needs python3 there.
+# puts the hook on that machine, so Claude and Codex sessions running there in Herdr terminals
+# fill their ⌃Tab cards too (codex there runs --no-daemon in them, and Codex is asked to trust the
+# hook), and the hc-workers skill, so an agent there can be a manager. It needs python3 there.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# Codex in Herdr's terminals runs its sessions itself (--no-daemon), so the hook knows their
+# terminal: the codex shell function in claude/codex.sh, loaded by this line in ~/.bashrc and
+# ~/.zshrc (each one there, and the login shell's even if not yet; added once, after a copy).
+RC_LINE='if [ -f "$HOME/.local/share/agent-note/codex.sh" ]; then . "$HOME/.local/share/agent-note/codex.sh"; fi  # agent-note: Codex in Herdr terminals (herdr-config claude/codex.sh)'
+ADD_RC='for f in "$HOME/.bashrc" "$HOME/.zshrc"; do
+  case $f in */."${SHELL##*/}"rc) ;; *) [ -f "$f" ] || continue ;; esac
+  grep -qsF share/agent-note/codex.sh "$f" && continue
+  if [ -f "$f" ]; then cp "$f" "$f.bak-$(date +%Y%m%d-%H%M%S)"; fi
+  printf "\n%s\n" "$1" >>"$f" && echo "codex in Herdr terminals runs --no-daemon: loaded from $f"
+done'
+# codex-hooks-trust on a machine: does Codex there trust the hooks (and trust them if not). A Vista
+# login node runs no Codex, so there it runs on a compute node of yours, which has the same home.
+trust_on() { # machine
+  case $1 in
+    vista | vista2 | vista3)
+      hc exec --on "$1" -- bash -c 'n=$(squeue --me -h -t R -o %N 2>/dev/null | head -1)
+        n=$(scontrol show hostnames "$n" 2>/dev/null | head -1)
+        if [ -z "$n" ]; then echo "codex-hooks-trust: not run (no compute node of yours is running); the codex command runs it on one."; exit 0; fi
+        timeout 120 ssh -o ConnectTimeout=10 "$n" .local/bin/codex-hooks-trust </dev/null' || true ;;
+    *) hc exec --on "$1" -- .local/bin/codex-hooks-trust || true ;;
+  esac
+}
 
 if [ "${1:-}" = "--remote" ]; then
   m=${2:?usage: ./install.sh --remote <machine>}
@@ -18,6 +41,12 @@ if [ "${1:-}" = "--remote" ]; then
   hc exec --on "$m" -- chmod +x .local/bin/agent-note
   hc exec --on "$m" -i -- python3 - <claude/merge-hooks.py
   hc exec --on "$m" -i -- python3 - <claude/merge-codex-hooks.py
+  hc exec --on "$m" -- mkdir -p .local/share/agent-note
+  hc file write --on "$m" .local/share/agent-note/codex.sh <claude/codex.sh >/dev/null
+  hc file write --on "$m" .local/bin/codex-hooks-trust <claude/codex-hooks-trust >/dev/null
+  hc exec --on "$m" -- chmod +x .local/bin/codex-hooks-trust
+  hc exec --on "$m" -- sh -c "$ADD_RC" sh "$RC_LINE"
+  trust_on "$m"
   # The skill as on a Mac (see below): one copy in ~/.agents/skills, a link in ~/.claude/skills.
   hc exec --on "$m" -- rm -rf .agents/skills/hc-workers
   for f in skills/hc-workers/*; do
@@ -26,7 +55,7 @@ if [ "${1:-}" = "--remote" ]; then
   hc exec --on "$m" -- sh -c 'd=$HOME/.claude/skills/hc-workers; mkdir -p "${d%/*}"
     if [ -L "$d" ] || [ ! -e "$d" ]; then ln -sfn ../../.agents/skills/hc-workers "$d"
     else echo "$d is a folder, so Claude Code keeps that copy" >&2; fi'
-  echo "$m: agent-note and the hc-workers skill are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new sessions see the skill."
+  echo "$m: agent-note, the codex function and the hc-workers skill are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
   exit 0
 fi
 
@@ -69,6 +98,11 @@ link_skill hc-workers
 # never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
 python3 claude/merge-hooks.py
 python3 claude/merge-codex-hooks.py
+# Codex in Herdr's terminals runs --no-daemon (see RC_LINE above), and Codex is asked whether it
+# trusts the hooks, which are then trusted with its own hashes if not.
+sh -c "$ADD_RC" sh "$RC_LINE"
+chmod +x "$HOME/.local/bin/codex-hooks-trust"
+"$HOME/.local/bin/codex-hooks-trust" || true
 
 # Small C helpers. The Command Line Tools' default SDK can be newer than its compiler; then an
 # older SDK that links is used.

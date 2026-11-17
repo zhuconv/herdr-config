@@ -20,6 +20,8 @@ ITEMS=(
   "herdr-app/mods/agent-deck-overview/|$H/mods/agent-deck-overview/"
   "herdr-app/mods/agent-deck-labels/|$H/mods/agent-deck-labels/"
   "claude/agent-note|$HOME/.local/bin/agent-note"
+  "claude/codex.sh|$HOME/.local/share/agent-note/codex.sh"
+  "claude/codex-hooks-trust|$HOME/.local/bin/codex-hooks-trust"
   "skills/hc-workers/|$HOME/.agents/skills/hc-workers/"
   "raycast/postkey.c|$HOME/.local/share/postkey/postkey.c"
 )

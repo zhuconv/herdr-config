@@ -1,0 +1,188 @@
+#!/usr/bin/env python3
+"""codex-hooks-trust: asks this machine's Codex whether it trusts the agent-note hooks, and
+trusts again any it doesn't, as Codex's own "Trust all" would.
+
+Codex runs a hook only once it's trusted: config.toml's [hooks.state."<key>"] trusted_hash, a
+hash Codex makes of the hook's definition. Until then every Codex start waits at "Hooks need
+review", and a Codex that a relay or a manager starts has no one to answer it. merge-codex-hooks.py
+writes the hashes Codex 0.169 gives, but another Codex may hash differently, and the key counts
+positions in hooks.json. So this asks Codex itself: `codex app-server`'s hooks/list gives each
+hook's trust status and the hash Codex makes of it now. Each agent-note hook (the command
+`"$HOME/.local/bin/agent-note" codex` in <CODEX_HOME>/hooks.json) that isn't trusted gets that
+hash written, and Codex is asked again; if it can't read the file after that, the file goes back
+as it was. Other hooks are only counted.
+
+install.sh runs it after adding the hooks, and the codex shell function (claude/codex.sh) once
+after the codex program changes. It starts no session and sends no prompt. Not on a Vista login
+node, where Codex mustn't run: on a compute node there, which has the same home.
+
+  codex-hooks-trust [--check] [--quiet]
+--check: only say. --quiet: print nothing when there was nothing to do.
+Exit 0: the agent-note hooks are trusted (now), or there are none; 1: some aren't (with --check:
+weren't); 2: Codex couldn't be asked.
+"""
+import json
+import os
+import re
+import select
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+COMMAND = '"$HOME/.local/bin/agent-note" codex'
+
+
+def ask(codex, timeout=30):
+    """Codex's version and its hooks (hooks/list), from `codex app-server`: JSON-RPC, one message
+    per line on its stdin and stdout."""
+    env = {k: v for k, v in os.environ.items() if k != "HC_TERMINAL_ID"}
+    cwd = tempfile.mkdtemp(prefix="codex-hooks-trust-")  # no project's own hooks
+    p = subprocess.Popen([codex, "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, cwd=cwd, env=env)
+    end, buf = time.time() + timeout, [b""]
+
+    def send(message):
+        p.stdin.write((json.dumps(message) + "\n").encode())
+        p.stdin.flush()
+
+    def reply(i):
+        while True:
+            while b"\n" in buf[0]:
+                line, buf[0] = buf[0].split(b"\n", 1)
+                try:
+                    m = json.loads(line)
+                except ValueError:
+                    continue
+                if isinstance(m, dict) and m.get("id") == i:
+                    if m.get("error"):
+                        raise RuntimeError(str((m["error"] or {}).get("message") or m["error"]))
+                    return m.get("result") or {}
+            left = end - time.time()
+            if left <= 0:
+                raise RuntimeError(f"no answer in {timeout} s")
+            if select.select([p.stdout], [], [], left)[0]:
+                chunk = os.read(p.stdout.fileno(), 65536)
+                if not chunk:
+                    raise RuntimeError(f"codex app-server ended (exit {p.wait()})")
+                buf[0] += chunk
+
+    try:
+        send({"id": 1, "method": "initialize", "params": {"clientInfo": {"name": "codex-hooks-trust", "version": "1"}}})
+        init = reply(1)
+        send({"method": "initialized"})
+        send({"id": 2, "method": "hooks/list", "params": {"cwds": [cwd]}})
+        listed = reply(2)
+    finally:
+        try:
+            p.stdin.close()
+        except OSError:
+            pass
+        p.terminate()
+        try:
+            p.wait(5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+        shutil.rmtree(cwd, ignore_errors=True)
+    version = re.search(r"/(\d[\w.+-]*)", init.get("userAgent") or "")
+    hooks = [h for e in listed.get("data") or [] for h in e.get("hooks") or [] if isinstance(h, dict)]
+    return (version.group(1) if version else "?"), hooks
+
+
+def ours(hooks, home):
+    """The agent-note hooks among them: our command, from this home's hooks.json."""
+    mine = os.path.realpath(os.path.join(home, "hooks.json"))
+    return [h for h in hooks if h.get("command") == COMMAND and h.get("key")
+            and os.path.realpath(h.get("sourcePath") or "") == mine]
+
+
+def with_trust(text, key, digest):
+    """config.toml's text with [hooks.state."<key>"] trusted_hash = digest: the section's line
+    replaced, else the line added to the section, else the section added at the end."""
+    header, line = f'[hooks.state."{key}"]', f'trusted_hash = "{digest}"'
+    lines = text.split("\n")
+    for i, l in enumerate(lines):
+        if l.strip() != header:
+            continue
+        j = i + 1
+        while j < len(lines) and not lines[j].lstrip().startswith("["):
+            if re.match(r"\s*trusted_hash\s*=", lines[j]):
+                lines[j] = line
+                return "\n".join(lines)
+            j += 1
+        lines.insert(i + 1, line)
+        return "\n".join(lines)
+    return text + ("" if not text or text.endswith("\n") else "\n") + f"\n{header}\n{line}\n"
+
+
+def short(path):
+    home = os.path.expanduser("~")
+    return "~" + path[len(home):] if path.startswith(home + os.sep) else path
+
+
+def main(argv):
+    check, quiet = "--check" in argv, "--quiet" in argv
+    home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    codex = shutil.which("codex") or os.path.expanduser("~/.local/bin/codex")
+    if not os.access(codex, os.X_OK):
+        if not quiet:
+            print("codex-hooks-trust: no codex here, nothing to trust.")
+        return 0
+    try:
+        version, hooks = ask(codex)
+    except (OSError, RuntimeError) as e:
+        print(f"codex-hooks-trust: couldn't ask Codex ({e}).", file=sys.stderr)
+        return 2
+    mine = ours(hooks, home)
+    others = sum(1 for h in hooks if h not in mine and h.get("trustStatus") in ("untrusted", "modified"))
+    also = f" It doesn't trust {others} other hook{'s' if others != 1 else ''} (left alone)." if others else ""
+    if not mine:
+        if not quiet:
+            print(f"Codex {version}: no agent-note hooks in {short(os.path.join(home, 'hooks.json'))}.{also}")
+        return 0
+    bad = [h for h in mine if h.get("trustStatus") not in ("trusted", "managed")]
+    if not bad:
+        if not quiet:
+            print(f"Codex {version} trusts the {len(mine)} agent-note hooks.{also}")
+        return 0
+    what = ", ".join(f"{h.get('eventName')} {h.get('trustStatus')}" for h in bad)
+    if check:
+        print(f"Codex {version} doesn't trust {len(bad)} of the agent-note hooks ({what}): run codex-hooks-trust.{also}")
+        return 1
+    toml = os.path.join(home, "config.toml")
+    try:
+        with open(toml) as f:
+            text = f.read()
+    except FileNotFoundError:
+        text = None
+    new = text or ""
+    for h in bad:
+        new = with_trust(new, h["key"], h.get("currentHash") or "")
+    backup = f"{toml}.bak-{time.strftime('%Y%m%d-%H%M%S')}"
+    if text is not None:
+        shutil.copy2(toml, backup)
+    with open(toml + ".tmp", "w") as f:
+        f.write(new)
+    os.replace(toml + ".tmp", toml)
+    try:  # Codex reads the file again: it must still load, and trust them now
+        _, hooks = ask(codex)
+        still = [h for h in ours(hooks, home) if h.get("trustStatus") not in ("trusted", "managed")]
+        why = ", ".join(f"{h.get('eventName')} {h.get('trustStatus')}" for h in still)
+    except (OSError, RuntimeError) as e:
+        still, why = True, str(e)
+    if still:
+        if text is None:
+            os.remove(toml)
+        else:
+            os.replace(backup, toml)
+        print(f"Codex {version} doesn't trust {len(bad)} of the agent-note hooks ({what}), and writing its hashes "
+              f"didn't help ({why}): {short(toml)} is as it was.", file=sys.stderr)
+        return 1
+    print(f"Codex {version} didn't trust {len(bad)} of the agent-note hooks ({what}): trusted them with its "
+          f"own hashes in {short(toml)}{', copy of the old one: ' + short(backup) if text is not None else ''}.{also}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
