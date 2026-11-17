@@ -57,7 +57,9 @@ function items(p, git) {
             ]
           : []),
         ...(parent ? [[`Send back to ${parent.name || parent.address}`, "terminal.park", { terminal: term.address }]] : []),
-        ...(inTab ? [["Close pane", "pane.close", { pane: tg.pane }]] : []),
+        // my-menu: through mods/my-tabs, which asks first when the terminal has running children
+        // (terminals started from it with hc run, e.g. a manager agent's workers).
+        ...(inTab ? [["Close pane", `my-tabs.close kill ${tg.pane}`]] : []),
       ];
     }
     case "tab":
@@ -74,7 +76,8 @@ function items(p, git) {
         ["Rename", "space.rename", { id: tg.id }],
         ...(git ? [["New worktree", "worktree", { space: tg.id, action: "new" }], ["Open worktree", "worktree", { space: tg.id, action: "open" }]] : []),
         ...(git === "linked" ? [["Remove worktree", "worktree", { space: tg.id, action: "remove" }]] : []),
-        ["Close", "space.close", { id: tg.id }],
+        // my-menu: through mods/my-tabs, as Close pane above.
+        ["Close", `my-tabs.close space ${tg.id}`],
       ];
     default:
       return [

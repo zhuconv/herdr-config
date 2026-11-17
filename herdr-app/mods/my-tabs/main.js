@@ -2,9 +2,10 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings,
   terminals, focused, machines, hc, exec, notify, nextCommand, agents, setShared, home,
-  watchFolder, readTextFile, playSound } from "herdr";
+  watchFolder, readTextFile, playSound, props } from "herdr";
 import { readdir } from "fs/promises";
 import { Reopener } from "./reopen.js";
+import { childrenOf, askClose, askView } from "./ask.js";
 import { pickWaiting } from "./waiting.js";
 import { Jobs, attachedTo, fromRecord, fromNote, matches } from "./jobs.js";
 import { Recent } from "./recent.js";
@@ -74,6 +75,12 @@ export default class Tabs extends View {
   }
 
   init(_props, cx) {
+    // The close dialog (ask.js) is this mod's overlay: that copy draws only the dialog.
+    if (props()?.closeAsk) {
+      this.handle = cx.focus_handle();
+      this.handle.focus();
+      return;
+    }
     this.panels = JSON.parse(localStorage.getItem("panels") ?? "{}");
     let folded = [];
     try { folded = JSON.parse(localStorage.getItem("folded") ?? "[]"); } catch {}
@@ -101,7 +108,16 @@ export default class Tabs extends View {
       for (;;) {
         const c = String(await nextCommand());
         try {
-          if (c === "close" || c.startsWith("close ")) this.closeTab(cx, c.slice(6).trim() || null);
+          // "close" (⌘W), "close <tab or pane>" (a tab's ×, the tab menu), "close kill <pane>" and
+          // "close space <id>" (mods/my-menu): each asks first when the terminals it ends have
+          // running children (ask.js). "close-confirmed <tab or pane>" is that dialog's yes.
+          if (c === "close" || c.startsWith("close ")) {
+            const arg = c.slice(6).trim();
+            if (arg.startsWith("kill ")) this.killPane(arg.slice(5).trim());
+            else if (arg.startsWith("space ")) this.closeSpace(arg.slice(6).trim());
+            else this.closeTab(cx, arg || null);
+          }
+          else if (c.startsWith("close-confirmed ")) this.closeTab(cx, c.slice(16).trim(), true);
           else if (c === "new-tab") this.newTab();
           else if (c === "reopen") await this.reopen.reopen(cx);
           else if (c === "waiting" || c === "waiting away") this.goWaiting(c === "waiting away");
@@ -383,7 +399,8 @@ export default class Tabs extends View {
   // When that takes the shown tab away, the bar's neighbour (projects.js replacement) is shown
   // first, so Herdr never shows the next tab of the space (maybe another project's) in between.
   // id: a tab ("tb…") or a pane ("p…"); none: the focused pane, or its tab if it's alone there.
-  closeTab(cx, id) {
+  // confirmed: the dialog below already asked.
+  closeTab(cx, id, confirmed = false) {
     // On a machine that can't be reached nothing there can close (and no reopen record should
     // be kept for it): ⌘W gives you a local terminal instead; a tab's × or Close says why.
     const at = id ? machineOf(id) : this.shownMachine();
@@ -396,6 +413,18 @@ export default class Tabs extends View {
     const tabId = id ? (pane ? all.find((p) => p.pane === id)?.tab : id) : f?.tab;
     const mine = all.filter((p) => p.tab === tabId);
     const whole = (id && !pane) || mine.length <= 1 || (!id && !mine.some((p) => p.pane === f?.pane));
+    // Parked terminals end after their grace (reopen.js). When the ones this parks have running
+    // children, e.g. a manager agent's workers, ask first; the dialog sends "close-confirmed".
+    const target = whole ? tabId : (pane ? id : f?.pane);
+    const ending = (whole ? mine : mine.filter((p) => p.pane === target)).filter((p) => p.terminal);
+    const kids = confirmed ? [] : childrenOf(terminals(), ending.map((p) => p.terminal));
+    if (target && kids.length) {
+      const agent = ending.some((p) => p.program?.agent || p.app);
+      const name = whole ? spaces().flatMap((s) => s.tabs).find((t) => t.id === tabId)?.name : ending[0]?.title;
+      askClose({ what: whole ? "tab" : "pane", name: name || target, command: `my-tabs.close-confirmed ${target}`, kids,
+        when: `It ends in ${agent ? "10 minutes" : "a minute"}; ⌘⇧T reopens it until then.` });
+      return;
+    }
     const shown = this.lastShown;
     if (whole && tabId && tabId === f?.tab && shown?.tab === tabId) {
       const next = replacement(shown, new Set(shown.list.filter((x) => x !== tabId)));
@@ -408,6 +437,25 @@ export default class Tabs extends View {
       }
     }
     this.reopen.close(cx, id);
+  }
+
+  // The pane menu's Close pane (mods/my-menu): ends its terminal at once, as Herdr's pane.close
+  // does, after asking when that terminal has running children.
+  killPane(id) {
+    const p = panes().find((x) => x.pane === id);
+    const kids = p?.terminal ? childrenOf(terminals(), [p.terminal]) : [];
+    if (kids.length) askClose({ what: "pane", name: p.title || p.terminal, command: "pane.close", args: { pane: id }, kids, when: "It ends at once." });
+    else run("pane.close", { pane: id });
+  }
+
+  // The space menu's Close (mods/my-menu). Herdr's space.close asks on its own; when the
+  // space's terminals have running children, this dialog names them and stands in for it.
+  closeSpace(id) {
+    const s = spaces().find((x) => x.id === id);
+    const tabs = new Set((s?.tabs ?? []).map((t) => t.id));
+    const kids = childrenOf(terminals(), panes().filter((p) => p.terminal && tabs.has(p.tab)).map((p) => p.terminal));
+    if (kids.length) askClose({ what: "space", name: s?.name || id, command: "space.close", args: { id, confirmed: true }, kids, when: "Its terminals end at once." });
+    else run("space.close", { id });
   }
 
   // ⌘T ("new-tab" in keys.json): a new tab in the shown space, as Herdr's tab.new. On a machine
@@ -831,8 +879,9 @@ export default class Tabs extends View {
       .when(d.kind === "tab" && d.count > 1, (el) => el.child(div().text_color(t.muted).child(`+${d.count - 1}`)));
   }
 
-  render() {
+  render(cx) {
     const t = theme();
+    if (props()?.closeAsk) return askView(t, props(), terminals(), this, cx);
     const space = spaces().find(p => p.active);
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
