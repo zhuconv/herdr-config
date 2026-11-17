@@ -40,6 +40,13 @@ terminal's turn count). One you haven't seen keeps its mark and alerts again. A 
 in the middle of a turn (the context filled up) reports nothing of its own and is left
 alone. A prompt sent during the compaction runs right after it, and Claude doesn't say
 working again, so the next UserPromptSubmit says it for Claude if the status is still cleared.
+Only a compaction that made Claude say working is hushed. If Claude was working already (its
+status in hc older than the compaction), it keeps working through the compaction and says
+nothing when it ends: no done to hush, and a cleared status would stay cleared until Claude's
+next change. Herdr's panels would then lose a Claude that runs over ssh (the terminal's own
+program is ssh or a script), and miss its real finish later. That's a subagent's compaction
+(PreCompact gives the main transcript; agent_id only from Claude Code 2.1.326) or any compaction
+while background agents run after the turn.
 
 On a cluster compute node the terminal's hc runs on the login node. There the label goes
 through `ssh <login node>`: $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev session.
@@ -68,10 +75,13 @@ def main():
     if sys.argv[1:2] == ["codex"]:
         return codex(event)
     job, own = os.environ.get("CLAUDE_JOB_DIR"), os.environ.get("HC_TERMINAL_ID")
-    name = event.get("hook_event_name")
+    name, start = event.get("hook_event_name"), time.time()
     if name == "PreCompact" or (name == "SessionStart" and event.get("source") == "compact"):
-        if own and not job and (event.get("trigger") == "manual" or between_turns(event.get("transcript_path"), after=name == "SessionStart")):
-            hush(own, wait=8.0 if name == "PreCompact" else 0)
+        path = event.get("transcript_path")
+        if own and not job and not event.get("agent_id") and (event.get("trigger") == "manual" or between_turns(path, after=name == "SessionStart")):
+            began = start if name == "PreCompact" else compaction_began(path, start)
+            if began is not None:
+                hush(own, wait=8.0 if name == "PreCompact" else 0, began=began)
         return
     if name == "UserPromptSubmit" and own and not job:
         try:
@@ -433,10 +443,11 @@ def hushed(term):
     return os.path.join(tempfile.gettempdir(), f"agent-note-{os.getuid()}", "hushed-" + term.replace("/", "_"))
 
 
-def hush(term, wait):
+def hush(term, wait, began):
     """A compaction between turns: once Claude says working (up to wait seconds), clear the
     terminal's status, so its done comes after no working and Herdr takes it as seen. Only when
-    the last finish was seen; herdr.seen moves to the turn count the clearing makes."""
+    the last finish was seen, and when the compaction (begun at time began) is what Claude says
+    working for; herdr.seen moves to the turn count the clearing makes."""
     end = time.time() + wait
     while True:
         t = terminal(term)
@@ -446,6 +457,9 @@ def hush(term, wait):
         time.sleep(1.0 if via() else 0.4)
     if state != "working":
         return
+    since = t.get("status_ms")  # when hc got the working: it stamps changes of state only
+    if isinstance(since, (int, float)) and since / 1000 < began - 10:
+        return  # working since before the compaction: nothing of its own to hush
     try:
         turn, seen = int(t.get("turn") or 0), int((t.get("labels") or {}).get("herdr.seen"))
     except (TypeError, ValueError):
@@ -523,6 +537,21 @@ def gist(reply):
     if whole and width(whole) <= 100:
         return whole
     return head(first, 40) + " …… " + tail(last, 60)
+
+
+def compaction_began(path, now):
+    """When the compaction a SessionStart(compact) follows began: the time on the boundary it
+    wrote (Claude writes it at the end) less how long it took. None when the transcript has no
+    boundary from the last two minutes: then this isn't about one in it."""
+    for entry in tail_entries(path):
+        if entry.get("type") == "system" and entry.get("subtype") == "compact_boundary":
+            try:
+                ended = datetime.fromisoformat(entry["timestamp"].replace("Z", "+00:00")).timestamp()
+                took = float((entry.get("compactMetadata") or {}).get("durationMs") or 0) / 1000
+            except (KeyError, AttributeError, TypeError, ValueError):
+                return None
+            return ended - took if now - ended < 120 else None
+    return None
 
 
 def tail_entries(path):
