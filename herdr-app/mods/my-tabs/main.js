@@ -834,14 +834,29 @@ export default class Tabs extends View {
         }
         if (!space?.tabs?.length) return;
         shells = space.tabs.map((t) => t.id);
-      } else if (!space.active) run("space.select", { id: space.id });
+      } else if (!space.active) {
+        // Selecting that space would show its own tab first, and whatever follows focus would
+        // take that tab's agent as looked at: Herdr drops its done mark, ⌃Tab's order and the
+        // Projects panel's open pill move to it. A blank tab (a mod pane, so nothing starts on
+        // that machine) is shown there instead, and goes once the worker has its tab.
+        const before = new Set(space.tabs.map((t) => t.id));
+        run("tab.new", { space: space.id, mod: "my-peek", props: { blank: true } });
+        let blank = null;
+        for (let i = 0; i < 100 && !blank; i++) {
+          await cx.sleep(50);
+          const s = spaces().find((x) => x.id === space.id);
+          blank = s?.active ? s.tabs.find((t) => !before.has(t.id) && t.active) : null;
+        }
+        if (!blank) return;
+        shells = [blank.id];
+      }
       run("terminal.keep", { terminal, place: "tab" });
       if (!(await this.shown(cx, terminal, true))) return;
       const tab = panes().find((p) => p.terminal === terminal)?.tab;
       // Herdr names a tab made for a kept terminal after its address ("t44").
       if (tab) run("tab.rename", { id: tab, name: term.name || "" });
       run("pane.focus", { terminal });
-      for (const id of shells) if (id !== tab) run("tab.close", { id });
+      for (const id of shells) if (id !== tab) run("tab.close", { id, confirmed: true });
       if (tab) this.placeKept(tab);
     } finally {
       this.keeping = false;

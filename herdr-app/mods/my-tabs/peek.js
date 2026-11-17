@@ -10,8 +10,9 @@ export function openPeek(terminal) {
   if (!terminal) return null;
   return openOverlay({
     kind: "dialog",
-    width: 0.84,
-    height: 0.84,
+    // As Herdr's own: centered, four fifths of the window each way.
+    width: 0.8,
+    height: 0.8,
     layout: {
       id: "peek",
       type: "column",

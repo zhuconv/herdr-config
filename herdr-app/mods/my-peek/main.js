@@ -3,7 +3,8 @@
 // who it is and how it's doing, who started it, its keep, ✕ to close. Its keep is the Agents
 // row's (my-tabs.keep): a tab on the worker's own machine, filed with its starter. Herdr's own
 // peek kept it in the shown space, which Herdr refuses for another machine's terminal, and
-// closed anyway. One already in a pane: "go to" it. Props: { terminal, overlay }.
+// closed anyway. One already in a pane: "go to" it. Props: { terminal, overlay }, or
+// { blank: true } for the blank tab my-tabs shows while keeping (an empty pane).
 
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
@@ -20,13 +21,6 @@ const clean = (s) => String(s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 const machineOf = (address) => (String(address ?? "").includes("/") ? String(address).split("/")[0] : null);
 
 export default class Peek extends View {
-  init(_props, cx) {
-    // The keyboard to the terminal under the bar, once the overlay is drawn (pane.focus picks a
-    // shown terminal block before a pane).
-    const terminal = props()?.terminal;
-    if (terminal) cx.timer.after(0, () => run("pane.focus", { terminal }));
-  }
-
   term() {
     return terminals().find((t) => t.address === props()?.terminal);
   }
@@ -61,6 +55,8 @@ export default class Peek extends View {
 
   render() {
     const t = theme();
+    // The blank tab mods/my-tabs shows while it keeps a worker in a space that wasn't shown.
+    if (props()?.blank) return div().size_full().bg(t.background);
     const { terminal, overlay } = props() ?? {};
     const k = this.term();
     const st = this.status();
