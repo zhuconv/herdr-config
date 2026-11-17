@@ -13,7 +13,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, panes, terminals, spaces, run, shared, setShared, props, closeOverlay, theme, home } from "herdr";
-import { projectOf, noteStatus } from "./projects.js";
+import { projectOf, noteStatus, starters, filedPane } from "./projects.js";
 
 const SWITCH = "my-tabs.switcher";
 // The left panel's projects (mods/my-projects); projects.js is a copy of its model.js.
@@ -34,9 +34,13 @@ function entries() {
   const spaceOf = new Map(spaces().flatMap((sp) => (sp.tabs ?? []).map((tab) => [tab.id, sp])));
   const filed = shared(PROJECTS);
   const out = new Map();
-  for (const p of panes()) {
+  const all = panes();
+  // A kept worker's: its starter's (projects.js starters), as the left panel files it.
+  const kept = starters([...terms.values()], all);
+  for (const p of all) {
     if (!p.terminal || out.has(p.terminal)) continue;
-    const project = projectOf(p, terms.get(p.terminal), spaceOf.get(p.tab), filed);
+    const fp = filedPane(p, kept);
+    const project = projectOf(fp, terms.get(fp.terminal), spaceOf.get(fp.tab), filed);
     const a = reported.get(p.terminal);
     if (a) { out.set(p.terminal, { ...a, project }); continue; }
     const agent = Boolean(p.program?.agent || AGENT_KEYS.has(p.program?.key));

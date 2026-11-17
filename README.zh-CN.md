@@ -21,6 +21,7 @@
 - **压缩对话不提醒。** Claude 在两个回合之间压缩对话时，会当成一个回合做完来报告。这包括它在空闲时自己做的压缩（长对话在最后一次回复约一小时后、prompt 缓存过期之前），也包括 `/compact`，所以 Herdr 会当成这个会话又做完了一次来提醒你。hook 在压缩开始时清掉窗格的状态，Herdr 就把压缩结束当成已经看过：不响声音、不弹提示，也不显示“做完了”。还没看过的完成照样保留标记。如果压缩开始时 Claude 本来就在工作（子代理的压缩，或者回合结束后后台代理还在跑），hook 就不动状态：这种压缩结束时 Claude 什么也不报告，状态清掉后会一直空着，通过 ssh 跑的 Claude 就会从 Agents 列表和 Projects 面板里消失。
 - **关掉 manager 前先问。** 要关的窗格、tab 或 space 里有终端用 `hc run` 开过别的终端（比如 manager agent 的 worker）时，Herdr 会先问，并列出它们：哪些会继续跑但没法再汇报，哪些会跟着结束。点一个可以 peek 看它，关掉 peek 就回到这个问题。
 - **在别的机器上开 worker。** 装了 `hc-workers` 这个 skill，你对话的那个 agent（manager，Claude 或 Codex 都行）可以在你的各台机器上开 Claude 或 Codex 会话，替它们处理确认提示，把它们的汇报转告给你。它们在 Agents 列表里挂在 manager 下面，你也可以直接打开任何一个，自己指挥。
+- **把 worker 留成 tab。** 鼠标移到 Agents 列表里 worker 那一行，点它的 keep 按钮（或者右键 → Keep as tab，或者在它的 peek 里点 keep）：它变成它自己那台机器上的一个 tab，视图跳过去。这个 tab 跟着启动它的 agent 走，不管它在哪个目录、哪台机器上跑：归到那个 agent 的 project 和胶囊里，在顶部栏里紧跟在它的 tab 后面。它那一行、它的窗格标题栏和左栏里的条目都标出它在哪台机器上。Send back（它的 tab、窗格和那一行的右键菜单里都有）把它送回启动者下面，继续运行。
 
 ### 快捷键
 
@@ -83,13 +84,14 @@ git pull && ./install.sh
 | `herdr-app/keys.json` | 上面那些快捷键 |
 | `herdr-app/layouts/my-main.json` | 布局 my-main：灰蓝色焦点框；左栏最上面一条用 my-chrome，往下是 my-projects、my-agents；窗格标题栏用 my-pane，右键菜单用 my-menu |
 | `herdr-app/mods/my-projects/` | Projects 面板，逻辑在 `model.js`。`optwatch.c` 是个小程序，`install.sh` 把它编译到 `~/.local/bin/herdr-optwatch`：它告诉左栏 ⌥ 有没有按住，也告诉 tab 栏拖到栏下面的拖动什么时候松手，因为 mod 只有拿到键盘焦点才知道修饰键（焦点通常在终端里），鼠标也只有在 mod 上方时才听得到。它只在 Herdr 是前台 app 时运行 |
-| `herdr-app/mods/my-tabs/` | tab 栏，还有 Overview 按钮、关闭后可恢复（`reopen.js`）、关闭会断开还在跑的子终端时先问一句（`ask.js`）、⌘G（`waiting.js`）和 ⌃Tab 的顺序（`recent.js`）。`jobs.js` 从 `~/.claude/jobs` 里 Claude Code 的记录得出后台会话（`claude attach`）的状态，是监听文件变化，不是轮询：tab 栏把状态写到会话所在终端的 `note.job` 标签上，其他面板读这个标签；响铃规则和 Herdr 一样。服务器上的会话来自 hook 在那边写的 `note.bg` 标签，从 Herdr 自己的终端列表里读（Herdr 不在前台时不重画，所以那时每 2 秒看一次）。`layoutdoc.js` 合并两个 tab 时，一次改写那台机器的布局，所以出来就是分好屏的样子；Herdr 的命令只能在当前焦点窗格旁边分屏，那样得先单独显示目标 tab。这个布局格式不是公开接口，哪天变了，合并会退回用那些命令。`projects.js` 是 my-projects 的 `model.js` 的拷贝，因为 mod 不能引用别的 mod 的文件 |
+| `herdr-app/mods/my-tabs/` | tab 栏，还有 Overview 按钮、关闭后可恢复（`reopen.js`）、关闭会断开还在跑的子终端时先问一句（`ask.js`）、⌘G（`waiting.js`）和 ⌃Tab 的顺序（`recent.js`）。`jobs.js` 从 `~/.claude/jobs` 里 Claude Code 的记录得出后台会话（`claude attach`）的状态，是监听文件变化，不是轮询：tab 栏把状态写到会话所在终端的 `note.job` 标签上，其他面板读这个标签；响铃规则和 Herdr 一样。服务器上的会话来自 hook 在那边写的 `note.bg` 标签，从 Herdr 自己的终端列表里读（Herdr 不在前台时不重画，所以那时每 2 秒看一次）。把 worker 留成 tab 和送回，走它的 `keep`、`sendback`、`peek` 三个命令，Agents 列表、菜单和 peek 都用它们（`peek.js` 负责打开 peek）。`layoutdoc.js` 合并两个 tab 时，一次改写那台机器的布局，所以出来就是分好屏的样子；Herdr 的命令只能在当前焦点窗格旁边分屏，那样得先单独显示目标 tab。这个布局格式不是公开接口，哪天变了，合并会退回用那些命令。`projects.js` 是 my-projects 的 `model.js` 的拷贝，因为 mod 不能引用别的 mod 的文件 |
 | `herdr-app/mods/agent-switcher/` | ⌃Tab 弹窗：每个窗格一张卡片，agent 显示最近的 prompt 和回复，shell 显示所在目录 |
-| `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带的拷贝）：分屏、全屏、关闭这几个按钮换成两个，鼠标移到标题栏上才出现：Fork，在跑 Claude 的窗格上（fork.js 在那台机器上从 Claude Code 自己的记录里找到它的会话；跑在计算节点上的 Claude 则看 hook 写的标签，副本经 ssh 开在那个节点上）；Move to new tab，在分屏里的窗格上 |
-| `herdr-app/mods/my-menu/` | 右键菜单（Herdr 自带的拷贝）：分屏里的窗格多一项 Move to new tab；顶部栏里分屏的 tab，每个名字有一项 Move X to new tab |
+| `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带的拷贝）：分屏、全屏、关闭这几个按钮换成两个，鼠标移到标题栏上才出现：Fork，在跑 Claude 的窗格上（fork.js 在那台机器上从 Claude Code 自己的记录里找到它的会话；跑在计算节点上的 Claude 则看 hook 写的标签，副本经 ssh 开在那个节点上）；Move to new tab，在分屏里的窗格上。别的机器上的终端，在目录前面标出那台机器 |
+| `herdr-app/mods/my-menu/` | 右键菜单（Herdr 自带的拷贝）：分屏里的窗格多一项 Move to new tab；顶部栏里分屏的 tab，每个名字有一项 Move X to new tab。Agents 列表里 worker 那一行的菜单：Keep as tab 和 Peek，或者 Go to tab 和 Send back |
+| `herdr-app/mods/my-peek/` | peek 一个 worker 时上面那条栏（Herdr 自带 peek 的拷贝）。它的 keep 和 Agents 列表的一样：变成 worker 自己那台机器上的 tab。Herdr 自带的会把它放进当前显示的 space，worker 在别的机器上时会失败 |
 | `herdr-app/mods/my-toast/` | 右下角的通知（Herdr 自带的拷贝）：agent 做完或需要你时，提示里用 Agents 列表里的名字（你给 tab 起的名字，否则是会话的名字），而不是“Claude Code”。`projects.js` 同样是 my-projects 的 `model.js` 的拷贝 |
 | `herdr-app/mods/my-chrome/` | 左栏最上面那一条（Herdr 自带的拷贝），去掉了 Herdr 的图标和名字：左边留给窗口的三个按钮，右边是搜索和收起左栏 |
-| `herdr-app/mods/my-agents/` | Agents 列表，显示成 "agent · space"，后台会话也在里面。`projects.js` 和 my-tabs 里的是同一份拷贝 |
+| `herdr-app/mods/my-agents/` | Agents 列表，显示成 "agent · space"，后台会话也在里面。worker 那一行标出它在哪台机器上，鼠标移上去出现 keep 按钮。`projects.js` 和 my-tabs 里的是同一份拷贝 |
 | `herdr-app/mods/agent-deck-*` | Overview 面板，来自 [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
 | `herdr-app/settings.json`、`themes/warp-dracula.json` | 字体、主题、缩放、提示音。`option_as_alt: "on"` 让 Option 在任何输入法下都当 Alt 用：用中文输入法的中文模式时，Herdr 默认把 ⌥1 交给输入法，于是打出字来，而不是切换 project |
 | `claude/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态；Herdr 没在看它们的记录时用这个兜底。在服务器上它还写 `note.bg`：Claude 记下的这个回合怎么结束的，给 Mac 上的 tab 栏用。用 resume 接回的对话，卡片会马上从对话记录里补上。后台会话的记录写到每个显示它的终端上：`claude attach <id>`，或者标题是该会话名字的 `claude --resume` 窗口。（它带的 `$HC_TERMINAL_ID` 是后台服务的，所以不用。）它还给每个窗格标上对话在哪，给 Fork 用：`note.session`、`note.cwd`，Claude 跑在别的主机（比如计算节点）上时还有 `note.host`。两个回合之间的压缩也由它处理（见上）：PreCompact 时，等 Claude 报告压缩“工作中”后，它清掉窗格的状态（OSC 7501 `state=clear`）。`install.sh` 会把它加进 `~/.claude/settings.json`。Codex 也跑它（`agent-note codex`，由 `claude/merge-codex-hooks.py` 加进 `~/.codex/hooks.json`，并在 Codex 的 `config.toml` 里设为信任）：记下同样的内容，另加 `note.ask`，即 Codex 等你批准的那件事。只对自己跑会话的 Codex 有效（`codex --no-daemon`）：Codex 的共享后台进程用它自己的环境跑 hook，所以在那里会跳过。在 Herdr 的终端里，`codex` 命令会自动这样启动（见下一行）。 |

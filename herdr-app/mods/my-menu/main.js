@@ -5,6 +5,8 @@
 // my-menu (a clone of Herdr's menu 0.1.15; the my-main layout's "terminal_menu", and the tab
 // bar's right-click): a pane of a split can move to a tab of its own ("Move to new tab": mods/
 // my-tabs "split-out"), and a tab's menu starts with the items its opener passes (props.extra).
+// The Agents list's worker rows open it too (tab "worker", mods/my-agents). A fourth element
+// of an item is a hint for the right, in place of its key.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -14,6 +16,24 @@ import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, 
 function place(s) {
   const tabs = new Set((s.tabs ?? []).map((c) => c.id));
   return panes().find((p) => tabs.has(p.tab) && p.cwd)?.cwd || s.folder;
+}
+
+const clean = (s) => String(s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
+const machineOf = (address) => (String(address ?? "").includes("/") ? String(address).split("/")[0] : null);
+
+// A worker's starter, as Send back names it: the nearest of its ancestors with a pane (else its
+// parent), by its hc name, else its program's title, as the Agents list shows them. Null for a
+// terminal no other started.
+function starterName(term, all) {
+  const by = new Map(all.map((t) => [t.address, t])), ps = panes(), seen = new Set();
+  let first = null;
+  for (let a = term?.parent; a && !seen.has(a); a = by.get(a)?.parent) {
+    seen.add(a);
+    const t = by.get(a), p = ps.find((x) => x.terminal === a);
+    first = first ?? (t?.name || a);
+    if (p) return t?.name || clean(p.title) || a;
+  }
+  return first;
 }
 
 // A space's checkout: "main" (a repo's own), "linked" (a worktree), or null.
@@ -29,10 +49,11 @@ function items(p, git) {
   const tg = p.target ?? {};
   switch (p.tab) {
     case "pane": {
-      // A kept sub-agent can go back under its parent, still running.
+      // A kept sub-agent can go back under its starter, still running (mods/my-tabs: then its
+      // starter's tab shows, when its own was the one shown and goes).
       const all = terminals();
       const term = all.find((t) => t.address === tg.terminal);
-      const parent = term?.parent && all.find((t) => t.address === term.parent);
+      const boss = term ? starterName(term, all) : null;
       // Once they go to the program, Shift+right-click still opens this menu.
       const toProgram = term?.labels?.["herdr.right-click"] === "program";
       // A terminal shown outside a tab (a layout terminal block, a window) has
@@ -56,7 +77,7 @@ function items(p, git) {
                 : ["Send right-clicks to pane", "terminal.right_click", { terminal: term.address, to: "program" }],
             ]
           : []),
-        ...(parent ? [[`Send back to ${parent.name || parent.address}`, "terminal.park", { terminal: term.address }]] : []),
+        ...(boss ? [[`Send back to ${boss}`, `my-tabs.sendback ${term.address}`]] : []),
         // my-menu: through mods/my-tabs, which asks first when the terminal has running children
         // (terminals started from it with hc run, e.g. a manager agent's workers).
         ...(inTab ? [["Close pane", `my-tabs.close kill ${tg.pane}`]] : []),
@@ -71,6 +92,18 @@ function items(p, git) {
         // the bar's next tab shows, not the space's.
         ["Close", `my-tabs.close ${tg.id}`],
       ];
+    case "worker": {
+      // A worker row in the Agents list (an agent's hc child). Kept as a tab: go there, or send it
+      // back under its starter. Else: keep it as a tab on its own machine (named on the right),
+      // or peek at it. Through mods/my-tabs, as the row's own click and keep button.
+      const all = terminals();
+      const term = all.find((t) => t.address === tg.terminal);
+      if (!term) return [];
+      const boss = starterName(term, all);
+      return panes().some((p) => p.terminal === term.address)
+        ? [["Go to tab", "pane.focus", { terminal: term.address }], ...(boss ? [[`Send back to ${boss}`, `my-tabs.sendback ${term.address}`]] : [])]
+        : [["Keep as tab", `my-tabs.keep ${term.address}`, undefined, machineOf(term.address) ?? "local"], ["Peek", `my-tabs.peek ${term.address}`]];
+    }
     case "space":
       return [
         ["Rename", "space.rename", { id: tg.id }],
@@ -92,7 +125,9 @@ function items(p, git) {
 }
 
 function menuIcon(command) {
-  if (command.startsWith("my-tabs.split-out")) return "mods/my-menu/pop-out.svg";
+  if (command.startsWith("my-tabs.split-out") || command.startsWith("my-tabs.keep") || command === "pane.focus") return "mods/my-menu/pop-out.svg";
+  if (command.startsWith("my-tabs.sendback")) return "mods/my-menu/undo-2.svg";
+  if (command.startsWith("my-tabs.peek")) return "mods/my-menu/eye.svg";
   const name = /\.close( |$)/.test(command) ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
   return `mods/workspace-chrome/${name}.svg`;
 }
@@ -152,7 +187,8 @@ export default class Menu extends View {
         list.map((it, i) =>
           v_flex()
             .when(i > 0 && (/\.close( |$)/.test(it[1]) || it[1] === "app.help" || (it[1] === "app.theme" && list[i - 1][1] !== "app.theme")
-              || (list[i - 1][1].startsWith("my-tabs.split-out") && !it[1].startsWith("my-tabs.split-out"))), el => el.child(div().mx(7).my(4).h(1).bg(t.border)))
+              || (list[i - 1][1].startsWith("my-tabs.split-out") && !it[1].startsWith("my-tabs.split-out"))
+              || (list[i - 1][1].startsWith("my-tabs.sendback") && !it[1].startsWith("my-tabs.sendback"))), el => el.child(div().mx(7).my(4).h(1).bg(t.border)))
             .child(h_flex()
             .id(`mi-${i}`)
             .h(31)
@@ -167,7 +203,7 @@ export default class Menu extends View {
             .on_click((_e, cx) => this.choose(i, cx))
             .child(svg(menuIcon(it[1])).size(14).flex_none().text_color(t.muted))
             .child(div().flex_1().child(it[0]))
-            .child(div().text_size(11).text_color(t.dim).child(shortcut(it[1], it[2])))),
+            .child(div().text_size(11).text_color(t.dim).child(it[3] ?? shortcut(it[1], it[2])))),
         ),
       );
   }

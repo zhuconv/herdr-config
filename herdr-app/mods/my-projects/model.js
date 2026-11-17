@@ -312,13 +312,49 @@ export function withBackground(list, { panes = [], spaces = [], terminals = [], 
   return out;
 }
 
+// A worker kept as a tab files with its starter: an agent's hc child (terminals()[].parent),
+// shown in a tab of its own, goes in the left panel and the bar where the terminal that started
+// it is (the nearest of its ancestors that has a pane), whatever folder or machine it runs in.
+// Each such terminal → that ancestor's pane (panes()). A worker none of whose ancestors has a
+// pane, or one in a pane beside its starter's, isn't here: it files by its own folder.
+export function starters(terminals, panes) {
+  const parent = new Map((terminals ?? []).map((t) => [t.address, t.parent ?? null]));
+  const paneOf = new Map();
+  for (const p of panes ?? []) if (p.terminal && !paneOf.has(p.terminal)) paneOf.set(p.terminal, p);
+  const out = new Map();
+  for (const [address, p] of paneOf) {
+    const seen = new Set([address]);
+    for (let a = parent.get(address); a && !seen.has(a); a = parent.get(a)) {
+      seen.add(a);
+      const sp = paneOf.get(a);
+      if (!sp) continue;
+      if (sp.tab !== p.tab) out.set(address, sp);
+      break;
+    }
+  }
+  return out;
+}
+
+// The pane a pane files as: a kept worker's starter's (starters()), up to the first that is no
+// kept worker itself; else its own.
+export function filedPane(p, starter = new Map()) {
+  const seen = new Set();
+  while (p?.terminal && starter.has(p.terminal) && !seen.has(p.terminal)) {
+    seen.add(p.terminal);
+    p = starter.get(p.terminal);
+  }
+  return p;
+}
+
 // Every tab, with its machine, its directory (its first agent's folder, else its first
 // terminal's, else its space's), its panes and the ones it lists, each named as the left panel
 // names a conversation.
 // labels: each terminal's (terminals()), for the state of agents that report none (noteStatus).
-export function tabsOf(spaces, panes, agents, keys = agentKeys(), labels = new Map()) {
+// starter: starters(); a kept worker's tab takes its starter's tab's directory, and says whose
+// it is (`starter`: the starter's terminal), to sit right after it in the bar.
+export function tabsOf(spaces, panes, agents, keys = agentKeys(), labels = new Map(), starter = new Map()) {
   const reported = new Map((agents ?? []).map((a) => [a.pane, a]));
-  return (spaces ?? []).flatMap((s) => (s.tabs ?? []).map((tab) => {
+  const tabs = (spaces ?? []).flatMap((s) => (s.tabs ?? []).map((tab) => {
     const mine = (panes ?? []).filter((p) => p.tab === tab.id).map((p) => {
       const a = reported.get(p.pane), program = a?.program ?? p.program, agent = runsAgent(p, reported, keys);
       return { pane: p.pane, terminal: p.terminal, cwd: p.cwd ?? null, title: a?.title ?? p.title,
@@ -340,6 +376,23 @@ export function tabsOf(spaces, panes, agents, keys = agentKeys(), labels = new M
       listed,
     };
   }));
+  if (!starter.size) return tabs;
+  // A kept worker's tab (by the terminal it lists first) files with its starter's tab, and that
+  // one maybe with its own starter's.
+  const own = new Map(tabs.map((t) => [t.id, t.key])), up = new Map();
+  for (const t of tabs) {
+    const sp = starter.get(t.listed[0]?.terminal);
+    if (!sp || sp.tab === t.id || !own.has(sp.tab)) continue;
+    up.set(t.id, sp.tab);
+    t.starter = sp.terminal;
+  }
+  for (const t of tabs) {
+    let id = t.id;
+    const seen = new Set();
+    while (up.has(id) && !seen.has(id)) { seen.add(id); id = up.get(id); }
+    t.key = own.get(id);
+  }
+  return tabs;
 }
 
 export const tabProject = (t, state) => ownerOf(t.key, state.projects, state.loose ?? []);
@@ -410,13 +463,14 @@ export function nthTab(groups, n) {
 }
 
 // What a tab (or one pane of a split) dropped on another tab does: "merge" (its terminals join
-// that tab as a split), "before" / "after" it (reordering, within a group), "deny" (another
-// machine: a tab holds one machine's terminals). x: where the pointer is across the target, 0–1.
+// that tab as a split), "before" / "after" it (reordering, within a group, whatever machine each
+// runs on: a kept worker sits in its starter's group), "deny" (merging another machine's: a tab
+// holds one machine's terminals). x: where the pointer is across the target, 0–1.
 export function dropZone(src, dst, x, sameGroup) {
   if (!src || !dst || src.id === dst.id) return null;
-  if ((src.machine ?? null) !== (dst.machine ?? null)) return "deny";
   if (sameGroup && x < 0.25) return "before";
   if (sameGroup && x > 0.75) return "after";
+  if ((src.machine ?? null) !== (dst.machine ?? null)) return "deny";
   return "merge";
 }
 

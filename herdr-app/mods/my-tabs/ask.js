@@ -6,6 +6,7 @@
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, closeOverlay, openOverlay, focused } from "herdr";
+import { openPeek } from "./peek.js";
 
 // Live terminals whose parent is one of `addrs`, leaving out those closing with them.
 // `parent` uses the same names as `address` (herdr.d.ts terminals()), as my-agents' tree() does.
@@ -32,13 +33,13 @@ export function askClose({ what, name, command, args, kids, when }) {
   } });
 }
 
-// The peek (terminal.peek, the Agents list's) opens over the dialog and has the keyboard while
-// it's open: focused() then reports its terminal with no pane (herdr.d.ts). Once that ends (its
-// ✕, ↗ go to or keep, or the child ending), the dialog takes the keyboard back, so Enter and Esc
+// The peek (peek.js, the Agents list's) opens over the dialog and has the keyboard while it's
+// open: focused() then reports its terminal with no pane (herdr.d.ts). Once that ends (its ✕,
+// keep or go to, or the child ending), the dialog takes the keyboard back, so Enter and Esc
 // answer it again. view: the overlay's copy of the view, which keeps the peek and focus handle.
 function peek(view, addr) {
   view.peek = { addr, seen: false };
-  run("terminal.peek", { terminal: addr });
+  openPeek(addr);
 }
 
 function refocus(view, cx) {

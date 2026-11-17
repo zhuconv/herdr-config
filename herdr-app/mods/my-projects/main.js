@@ -22,7 +22,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, focused, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, focusedPill, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabProject, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, focusedPill, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabProject, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus, starters, filedPane } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -119,22 +119,29 @@ const save = (s) => setShared(STATE, s);
 const keysNow = () => agentKeys(shared("new-menu.agents"));
 
 // Every conversation, with its machine, space and folder: each pane running an agent
-// (model.js runsAgent, the same test the tab bar uses).
+// (model.js runsAgent, the same test the tab bar uses). A kept worker files with its starter
+// (model.js starters): its machine and folder are the starter's, and runsOn says where it runs.
 function conversations() {
   const reported = new Map(agents().map((a) => [a.pane, a]));
-  const terms = new Map(terminals().map((x) => [x.address, x]));
+  const all = terminals(), list = panes();
+  const terms = new Map(all.map((x) => [x.address, x]));
   const tabs = new Map(spaces().flatMap((s) => (s.tabs ?? []).map((tab) => [tab.id, { tab, space: s }])));
-  const keys = keysNow();
-  return panes().filter((p) => runsAgent(p, reported, keys)).map((p, i) => {
+  const keys = keysNow(), kept = starters(all, list);
+  const where = (p) => {
+    const at = tabs.get(p.tab), address = p.terminal ?? "";
+    return { machine: at?.space.machine ?? (address.includes("/") ? address.split("/")[0] : null), cwd: p.cwd || terms.get(address)?.cwd || at?.space.folder || "" };
+  };
+  return list.filter((p) => runsAgent(p, reported, keys)).map((p, i) => {
     const a = reported.get(p.pane), address = a?.address ?? p.terminal;
     const at = tabs.get(p.tab), term = terms.get(address);
     const program = a?.program ?? p.program;
+    const own = where(p), filed = kept.has(p.terminal) ? where(filedPane(p, kept)) : own;
     return {
       // A background session reports no status: its labels say (model.js noteStatus).
       address, pane: p.pane, status: a?.status ?? p.status ?? noteStatus(term?.labels), focused: p.focused, program, order: i,
-      machine: at?.space.machine ?? (address.includes("/") ? address.split("/")[0] : null),
+      machine: filed.machine, runsOn: own.machine,
       space: at?.space.id ?? null,
-      cwd: p.cwd || term?.cwd || at?.space.folder || "",
+      cwd: filed.cwd,
       name: nameOf({ address, title: a?.title ?? p.title, program }, at?.tab),
     };
   });
@@ -171,8 +178,8 @@ function openIn(machine, path, space = null) {
   if (at) run("tab.new", { space: at, ...opts });
   else run("space.new", { machine: machine ?? "", ...opts });
 }
-// A pill's +: in the space its conversations are in.
-const newSession = (pill) => openIn(pill.machine, pill.path, pill.convs.find((c) => c.space)?.space);
+// A pill's +: in the space its conversations are in (one on its machine: a kept worker's runs on another).
+const newSession = (pill) => openIn(pill.machine, pill.path, pill.convs.find((c) => c.space && (c.runsOn ?? null) === (pill.machine ?? null))?.space);
 
 // A directory made for a project (model.js addDir); its pill goes last there.
 function addDirTo(key, to) {
@@ -194,7 +201,8 @@ const NEWDIR_KEYS = "MyProjectsNewDir"; // the dialog's key context: its Tab, â†
 // focus, else its first tab's; with no tabs, the bar shows it empty until focus moves.
 // last: each project's last-used pane (the panel's remember()).
 function pickProject(name, last) {
-  const tabs = tabsOf(spaces(), panes(), agents(), keysNow());
+  const ps = panes();
+  const tabs = tabsOf(spaces(), ps, agents(), keysNow(), new Map(), starters(terminals(), ps));
   const groups = tabGroups(tabs, state(), name, { home: home(), pills: shared(PILLS) ?? [], order: shared(TAB_ORDER) ?? [] });
   const pane = landing(groups, last?.[name ?? UNSORTED]);
   setShared(PICK, { project: name, at: Date.now() });
@@ -424,8 +432,9 @@ export default class Projects extends View {
     const f = focused(), pane = f?.pane ?? null;
     if (pane === this.lastPane) return;
     this.lastPane = pane;
-    const space = pane ? spaces().find((s) => (s.tabs ?? []).some((t) => t.id === f.tab)) : null;
-    const tab = space ? tabsOf([space], panes(), agents(), keysNow()).find((t) => t.id === f.tab) : null;
+    // Every space's tabs: a kept worker's tab files with its starter's, maybe in another space.
+    const ps = pane ? panes() : [];
+    const tab = pane ? tabsOf(spaces(), ps, agents(), keysNow(), new Map(), starters(terminals(), ps)).find((t) => t.id === f.tab) : null;
     if (!tab) return;
     const key = tabProject(tab, state()) ?? UNSORTED;
     if (this.last[key] === pane) return;
@@ -584,7 +593,10 @@ export default class Projects extends View {
       // Right-click: the menu of the directory it runs in (projects hold directories).
       .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openDirMenu(dirKey(c.machine, c.cwd)); })
       .when(Boolean(pic), (el) => el.child(pic))
-      .child(div().flex_1().min_w(0).truncate().text_size(12).text_color(quiet ? t.muted : t.foreground).child(c.name))
+      .child(h_flex().flex_1().min_w(0).gap(4).items_center()
+        .child(div().min_w(0).truncate().text_size(12).text_color(quiet ? t.muted : t.foreground).child(c.name))
+        // A kept worker filed with its starter runs on another machine than its pill's: which.
+        .when((c.runsOn ?? null) !== (c.machine ?? null), (el) => el.child(div().flex_none().text_size(12).text_color(t.dim).child(`\u00b7 ${c.runsOn ?? "local"}`))))
       .when(Boolean(since), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - since))))
       .child(h_flex().w(14).flex_none().justify_center().child(mark(t, c.status) ?? div()));
   }

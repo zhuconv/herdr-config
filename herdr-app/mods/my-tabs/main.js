@@ -9,7 +9,8 @@ import { childrenOf, askClose, askView } from "./ask.js";
 import { pickWaiting } from "./waiting.js";
 import { Jobs, attachedTo, fromRecord, fromNote, matches } from "./jobs.js";
 import { Recent } from "./recent.js";
-import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf } from "./projects.js";
+import { openPeek } from "./peek.js";
+import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf, starters } from "./projects.js";
 import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
@@ -37,9 +38,12 @@ const hash = (s) => [...String(s)].reduce((h, c) => (Math.imul(h, 31) + c.charCo
 // A color at some opacity ("80" = 50%), when it's a plain #rrggbb; else the fallback.
 const faint = (c, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(c ?? "") ? c + alpha : fallback);
 // Every tab, with the agents it lists (projects.js tabsOf), told apart as the left panel does;
-// a background session's state from its agent-note label.
-const allTabs = () => tabsOf(spaces(), panes(), agents(), agentKeys(shared("new-menu.agents")),
-  new Map(terminals().map((x) => [x.address, x.labels])));
+// a background session's state from its agent-note label; a kept worker's tab filed with its
+// starter's (projects.js starters).
+const allTabs = () => {
+  const ps = panes(), ts = terminals();
+  return tabsOf(spaces(), ps, agents(), agentKeys(shared("new-menu.agents")), new Map(ts.map((x) => [x.address, x.labels])), starters(ts, ps));
+};
 const select = (tab) => { run("space.select", { id: tab.space }); run("tab.select", { id: tab.id }); };
 // A machine whose layout can't be read now (offline, or waiting for a login, as vista after its
 // MFA lapses): Herdr's commands on its spaces fail. Never this computer (null).
@@ -132,6 +136,12 @@ export default class Tabs extends View {
           // "split-out <terminal>": from the pane header's button (mods/my-pane) and the
           // right-click menus (mods/my-menu).
           else if (c.startsWith("split-out ")) await this.splitOut(cx, c.slice(10).trim());
+          // A worker (an agent's hc child) as a tab of its own and back, and a look at it: from
+          // the Agents list's rows (mods/my-agents), the menus (mods/my-menu) and the peek's keep
+          // (mods/my-peek), so each does the same.
+          else if (c.startsWith("keep ")) await this.keepWorker(cx, c.slice(5).trim());
+          else if (c.startsWith("sendback ")) await this.sendBack(cx, c.slice(9).trim());
+          else if (c.startsWith("peek ")) openPeek(c.slice(5).trim());
         } catch (err) {
           console.log("my-tabs", c, String(err?.stack ?? err));
         }
@@ -794,6 +804,83 @@ export default class Tabs extends View {
     cx.notify();
   }
 
+  // ---- workers kept as tabs (the keep-worker design, 2026-11-17)
+
+  // A worker (a running terminal with no pane, such as an agent's hc child) becomes a tab on its
+  // own machine, and the view goes there. Herdr's terminal.keep puts it in the shown space and
+  // refuses another machine's terminal, so a space on its machine shows first: the shown one if
+  // it's there, else that machine's first, else a new one, whose own first tab (a shell) then
+  // goes. The tab takes the worker's hc name, as the Agents list shows it, and sits right after
+  // its starter's tab in the bar (placeKept); the left panel and the bar file it with its
+  // starter (projects.js starters). One already in a pane is just shown.
+  async keepWorker(cx, terminal) {
+    if (!terminal || this.keeping) return;
+    if (panes().some((p) => p.terminal === terminal)) { run("pane.focus", { terminal }); return; }
+    const term = terminals().find((t) => t.address === terminal);
+    if (term?.state !== "live") return;
+    const machine = machineOf(terminal);
+    if (down(machine)) { this.machineNotice(machine); return; }
+    this.keeping = true;
+    try {
+      const mine = (s) => (s.machine ?? null) === machine;
+      let space = spaces().find((s) => s.active && mine(s)) ?? spaces().find(mine);
+      let shells = [];
+      if (!space) {
+        const before = new Set(spaces().map((s) => s.id));
+        run("space.new", { machine: machine ?? "" });
+        for (let i = 0; i < 100 && !space?.tabs?.length; i++) {
+          await cx.sleep(100);
+          space = spaces().find((s) => !before.has(s.id) && mine(s));
+        }
+        if (!space?.tabs?.length) return;
+        shells = space.tabs.map((t) => t.id);
+      } else if (!space.active) run("space.select", { id: space.id });
+      run("terminal.keep", { terminal, place: "tab" });
+      if (!(await this.shown(cx, terminal, true))) return;
+      const tab = panes().find((p) => p.terminal === terminal)?.tab;
+      // Herdr names a tab made for a kept terminal after its address ("t44").
+      if (tab) run("tab.rename", { id: tab, name: term.name || "" });
+      run("pane.focus", { terminal });
+      for (const id of shells) if (id !== tab) run("tab.close", { id });
+      if (tab) this.placeKept(tab);
+    } finally {
+      this.keeping = false;
+      cx.notify();
+    }
+  }
+
+  // A kept worker's tab in the bar: right after its starter's tab and the ones kept from it
+  // before, in the tabs' dragged order (ORDER), as a drag there would put it.
+  placeKept(id) {
+    const tabs = allTabs(), me = tabs.find((t) => t.id === id);
+    if (!me?.starter) return;
+    const st = projectState();
+    const groups = tabGroups(tabs, st, tabProject(me, st), { home: home(), pills: shared(PILLS) ?? [], order: shared(ORDER) ?? [] });
+    const ids = groups.find((g) => g.tabs.some((t) => t.id === id))?.tabs.map((t) => t.id).filter((x) => x !== id) ?? [];
+    const by = new Map(tabs.map((t) => [t.id, t]));
+    let i = ids.findIndex((x) => by.get(x)?.panes.some((p) => p.terminal === me.starter));
+    if (i < 0) return;
+    while (i + 1 < ids.length && by.get(ids[i + 1])?.starter === me.starter) i++;
+    ids.splice(i + 1, 0, id);
+    setShared(ORDER, withGroup(shared(ORDER) ?? [], ids));
+  }
+
+  // A kept worker goes back under its starter, still running (terminal.park: its pane goes, and
+  // its tab with it when it was alone there). When that was the tab shown, its starter's shows
+  // instead of whatever Herdr would show next; else the view stays where it is.
+  async sendBack(cx, terminal) {
+    const all = panes(), mine = all.find((p) => p.terminal === terminal);
+    if (!mine) return;
+    const alone = all.filter((p) => p.tab === mine.tab).length === 1;
+    if (alone && focused()?.tab === mine.tab) {
+      const boss = starters(terminals(), all).get(terminal);
+      if (boss) run("pane.focus", { pane: boss.pane });
+    }
+    run("terminal.park", { terminal });
+    await this.shown(cx, terminal, false);
+    cx.notify();
+  }
+
   // ---- drawing
 
   programIcon(t, program) {
@@ -855,11 +942,15 @@ export default class Tabs extends View {
       .on_mouse_move((e) => { if (this.drag) this.hit = { id: tab.id, x: e.local_position.x / (e.bounds?.width || 1) }; })
       // A release that ends a drag isn't a click.
       .on_click(() => { if (!this.drag?.moved) select(tab); })
-      // Right-click: Herdr's tab menu (mods/my-menu), led by a split's names, each of which can
-      // move to a tab of its own.
+      // Right-click: Herdr's tab menu (mods/my-menu), led by a kept worker's way back under its
+      // starter (named as the bar names it), then a split's names, each of which can move to a
+      // tab of its own.
       .on_mouse_down("right", (_e, cx) => {
         cx.stop_propagation();
-        const extra = tab.listed.length > 1 ? tab.listed.filter((p) => p.terminal).map((p) => [`Move ${p.name} to new tab`, `my-tabs.split-out ${p.terminal}`]) : [];
+        const boss = tab.starter ? this.view.flatMap((g) => g.tabs).flatMap((x) => x.listed).find((p) => p.terminal === tab.starter) : null;
+        const back = tab.starter ? [[`Send back to ${boss?.name || tab.starter}`, `my-tabs.sendback ${tab.listed[0].terminal}`]] : [];
+        const split = tab.listed.length > 1 ? tab.listed.filter((p) => p.terminal).map((p) => [`Move ${p.name} to new tab`, `my-tabs.split-out ${p.terminal}`]) : [];
+        const extra = [...back, ...split];
         openOverlay({ mod: "my-menu", kind: "popup", width: extra.length ? 260 : 200, props: { tab: "tab", target: { id: tab.id, space: tab.space }, extra } });
       })
       .when(num != null, (el) => el.child(div().min_w(7).flex_none().flex().justify_center().text_size(11).font_semibold()

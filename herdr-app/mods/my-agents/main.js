@@ -4,7 +4,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
-import { agentKeys, withBackground, sessionTitle, projectOf } from "./projects.js";
+import { agentKeys, withBackground, sessionTitle, projectOf, starters, filedPane } from "./projects.js";
 
 // my-agents: background sessions too (`claude attach` to one), which Herdr's agents() leaves
 // out: projects.js withBackground (a copy of mods/my-projects/model.js).
@@ -174,8 +174,9 @@ export default class Agents extends View {
         .when(s.id === on, (el) => el.child(svg("mods/workspace-chrome/check.svg").size(14).flex_none().text_color(t.foreground)))));
   }
 
+  // A look at a worker with no pane: mods/my-tabs' peek, whose keep is this list's (my-peek).
   peek(addr) {
-    run("terminal.peek", { terminal: addr });
+    run(`my-tabs.peek ${addr}`);
   }
 
   // Live sub-agents of `addr`, depth first, each with the tree lines in front of it.
@@ -190,11 +191,39 @@ export default class Agents extends View {
     });
   }
 
-  subRow(t, s, shown, compact) {
+  // A worker (an agent's hc child), under its starter, with its machine on the right when it's
+  // another one. With no pane: a click peeks at it, and on hover a keep button (in its state's
+  // place, as a top row's pin takes its time's) makes it a tab on its own machine (both through
+  // mods/my-tabs, the peek's keep too). Kept (in a pane of its own): a click goes there.
+  // Right-click: the worker menu (mods/my-menu), with the same.
+  // inPane: the terminals shown in panes; on: the one focused or peeked at.
+  subRow(t, s, on, compact, inPane) {
     const k = s.t;
     const st = kidStatus(k, this.listed);
     const pic = icon(k.program, 14, t.foreground);
-    const on = k.address === shown;
+    const here = k.address === on;
+    const kept = inPane.has(k.address);
+    const machine = k.address.includes("/") ? k.address.split("/")[0] : null;
+    const keep = div()
+      .id(`keep-${k.address}`)
+      .size(20)
+      .mr(-4)
+      .flex_none()
+      .flex()
+      .items_center()
+      .justify_center()
+      .rounded(5)
+      .text_color(t.dim)
+      .cursor_pointer()
+      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .tooltip(`Keep as a tab on ${machine ?? "local"}`)
+      .on_click((_e, cx) => {
+        cx.stop_propagation();
+        run(`my-tabs.keep ${k.address}`);
+        this.hoveredSub = null;
+        cx.notify();
+      })
+      .child(svg("mods/my-menu/pop-out.svg").size(14));
     return h_flex()
       .id(`sub-${k.address}`)
       .pl(39)
@@ -205,15 +234,25 @@ export default class Agents extends View {
       .gap(0)
       .items_center()
       .text_size(12.5)
-      .when(on, (el) => el.bg(t.raised))
+      .when(here, (el) => el.bg(t.raised))
       .hover((s) => s.bg(t.hover))
-      .on_click(() => (this.listed.has(k.address) ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
+      .on_hover((inside, cx) => {
+        if (inside) this.hoveredSub = k.address;
+        else if (this.hoveredSub === k.address) this.hoveredSub = null;
+        cx.notify();
+      })
+      .on_click(() => (kept ? run("pane.focus", { terminal: k.address }) : this.peek(k.address)))
+      .on_mouse_down("right", (_e, cx) => {
+        cx.stop_propagation();
+        openOverlay({ mod: "my-menu", kind: "popup", width: 240, props: { tab: "worker", target: { terminal: k.address } } });
+      })
       .children(s.lines.map(l => div().self_start().mt(-4).w(9).h(17).mr(4).flex_none()
         .when(Boolean(l), el => el.border_l(1.5).border_color(t.input))
         .when(l === "└" || l === "├", el => el.border_b(1.5).rounded_bl(6))))
       .when(Boolean(pic), el => el.child(div().mr(8).child(pic)))
-      .child(div().flex_1().truncate().text_color(on ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
-      .child(this.status(t, { status: st }, compact));
+      .child(div().flex_1().truncate().text_color(here ? t.foreground : t.muted).child(k.name || k.template || k.program?.name || k.address))
+      .when(Boolean(machine), el => el.child(div().flex_none().ml(6).mr(6).text_size(10).text_color(t.dim).child(machine)))
+      .child(!kept && this.hoveredSub === k.address ? keep : this.status(t, { status: st }, compact));
   }
 
   // compact: a ! for blocked where a header already says "Needs you".
@@ -241,7 +280,11 @@ export default class Agents extends View {
     let list = withBackground(agents(), { panes: paneList, spaces: spaceList, terminals: all, keys: agentKeys(shared("new-menu.agents")) });
     this.listed = new Map(list.map((a) => [a.address, a.status]));
     this.migratePins(all);
-    const shown = focused()?.agent;
+    // The agent focused; a worker peeked at has the keyboard with no pane (mods/my-tabs peek.js).
+    const f = focused();
+    const shown = f?.agent ?? null;
+    const peeked = f && !f.pane ? f.terminal : null;
+    const inPane = new Set(paneList.map((p) => p.terminal).filter(Boolean));
     const now = Date.now();
     this.track(list, now);
     this.hold(list);
@@ -264,7 +307,7 @@ export default class Agents extends View {
       const subs = collapsed ? [] : this.tree(all, a.address);
       const r = row(a, i, subs);
       if (this.folded.has(a.address)) return [r];
-      return [r, ...subs.map((s) => this.subRow(t, s, shown, byPriority))];
+      return [r, ...subs.map((s) => this.subRow(t, s, peeked ?? shown, byPriority, inPane))];
     };
 
     // The fold chevron; folded, the count too, colored by the most urgent one.
@@ -302,8 +345,12 @@ export default class Agents extends View {
     const termOf = new Map(all.map((x) => [x.address, x]));
     const spaceOf = new Map(spaceList.flatMap((s) => (s.tabs ?? []).map((tab) => [tab.id, s])));
     const filed = shared(PROJECTS);
-    const projectBy = new Map(list.map((a) => [a.address,
-      projectOf(paneOf.get(a.pane) ?? { terminal: a.address }, termOf.get(a.address), spaceOf.get(a.tab), filed)]));
+    // A kept worker's (a pinned one has a row of its own): its starter's (projects.js starters).
+    const kept = starters(all, paneList);
+    const projectBy = new Map(list.map((a) => {
+      const p = filedPane(paneOf.get(a.pane) ?? { terminal: a.address, tab: a.tab }, kept);
+      return [a.address, projectOf(p, termOf.get(p.terminal), spaceOf.get(p.tab ?? a.tab), filed)];
+    }));
     const labels = new Map(list.map(a => {
       const tab = tabs.get(a.tab);
       const many = tabCounts.get(a.tab) > 1;
