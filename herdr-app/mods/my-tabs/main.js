@@ -10,7 +10,7 @@ import { pickWaiting } from "./waiting.js";
 import { Jobs, attachedTo, fromRecord, fromNote, matches } from "./jobs.js";
 import { Recent } from "./recent.js";
 import { openPeek } from "./peek.js";
-import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf, starters } from "./projects.js";
+import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf, starters, LOCAL_KEY } from "./projects.js";
 import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
@@ -989,7 +989,7 @@ export default class Tabs extends View {
     const folded = this.folded.has(g.key);
     const dot = h_flex().id(`grp-${hash(g.key)}`).h(29).px(7).gap(5).flex_none().items_center().rounded(7)
       .text_size(11.5).font_semibold().text_color(t.muted).cursor_pointer().hover((s) => s.bg(t.hover))
-      .tooltip(`${g.machine ?? "local"} · ${shortPath(g.path, g.machine ? null : home())}`)
+      .tooltip(`${g.machine ?? (shared(LOCAL_KEY) || "local")} · ${shortPath(g.path, g.machine ? null : home())}`)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => { folded ? this.folded.delete(g.key) : this.folded.add(g.key); this.saveFolds(); cx.notify(); })
       .child(div().size(7).flex_none().rounded(4).bg(color))

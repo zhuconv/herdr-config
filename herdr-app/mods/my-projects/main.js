@@ -22,7 +22,7 @@
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
 import { agents, panes, terminals, spaces, focused, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window } from "herdr";
-import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, focusedPill, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabProject, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus, starters, filedPane } from "./model.js";
+import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, focusedPill, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabProject, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus, starters, filedPane, LOCAL_KEY } from "./model.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -117,6 +117,8 @@ const save = (s) => setShared(STATE, s);
 
 // The agent programs (model.js agentKeys), with Herdr's list as the + menu last got it.
 const keysNow = () => agentKeys(shared("new-menu.agents"));
+// This computer, where a label names a machine (model.js LOCAL_KEY).
+const localName = () => shared(LOCAL_KEY) || "local";
 
 // Every conversation, with its machine, space and folder: each pane running an agent
 // (model.js runsAgent, the same test the tab bar uses). A kept worker files with its starter
@@ -147,7 +149,7 @@ function conversations() {
   });
 }
 
-const projectsNow = (convs = conversations()) => group(convs, state(), { home: home(), order: shared(ORDER) ?? [], pills: shared(PILLS) ?? [] });
+const projectsNow = (convs = conversations()) => group(convs, state(), { home: home(), order: shared(ORDER) ?? [], pills: shared(PILLS) ?? [], local: localName() });
 
 // One group's pills as shown: a project's name, or UNSORTED.
 function pillKeys(name) {
@@ -165,7 +167,7 @@ function moveDirTo(key, to, slot = null) {
 }
 const iconOf = (name) => (shared(ICONS) ?? {})[name] ?? assignIcon(name);
 const homeOf = (machine) => (machine ? null : home());
-const where = (key) => { const d = splitDir(key); return `${d.machine ?? "local"} · ${shortPath(d.path, homeOf(d.machine))}`; };
+const where = (key) => { const d = splitDir(key); return `${d.machine ?? localName()} · ${shortPath(d.path, homeOf(d.machine))}`; };
 
 // Starts Claude in a directory on a machine: a new tab in the given space, else the machine's
 // first space, else a new space there. On a login node (model.js agentsRunOn: Vista's) it opens
@@ -252,6 +254,14 @@ export default class Projects extends View {
     this.closed = new Set(read("closed", []));
     this.open = read("open", {});
     this.changed = read("changed", {});
+    // This computer's name (model.js LOCAL_KEY), once per start: the panels label it with it.
+    cx.spawn(async () => {
+      try {
+        const r = await hc(["server", "status"]);
+        const name = r.code === 0 ? JSON.parse(r.stdout).core?.name : null;
+        if (name && shared(LOCAL_KEY) !== name) setShared(LOCAL_KEY, name);
+      } catch {}
+    });
     // A drag: a project's row (to reorder) or a directory's pill (into another group). It
     // starts on the press and counts once the pointer has gone 4 px, so a click stays a click.
     this.drag = null; // { kind: "project", name } or { kind: "dir", key, from, grab, look }; x, y, moved, at
@@ -596,7 +606,7 @@ export default class Projects extends View {
       .child(h_flex().flex_1().min_w(0).gap(4).items_center()
         .child(div().min_w(0).truncate().text_size(12).text_color(quiet ? t.muted : t.foreground).child(c.name))
         // A kept worker filed with its starter runs on another machine than its pill's: which.
-        .when((c.runsOn ?? null) !== (c.machine ?? null), (el) => el.child(div().flex_none().text_size(12).text_color(t.dim).child(`\u00b7 ${c.runsOn ?? "local"}`))))
+        .when((c.runsOn ?? null) !== (c.machine ?? null), (el) => el.child(div().flex_none().text_size(12).text_color(t.dim).child(`\u00b7 ${c.runsOn ?? localName()}`))))
       .when(Boolean(since), (el) => el.child(div().flex_none().text_size(11).text_color(t.dim).child(duration(now - since))))
       .child(h_flex().w(14).flex_none().justify_center().child(mark(t, c.status) ?? div()));
   }
@@ -999,7 +1009,7 @@ class Popup {
         .border_color(on ? ringColor(t) : t.input).bg(on ? t.selected : t.raised).text_size(12)
         .text_color(on ? t.foreground : t.muted).cursor_pointer().when(!on, (el) => el.hover((s) => s.bg(t.hover)))
         .on_click((_e, cx) => { this.on = m; this.error = null; this.select(0); this.refresh(cx); this.input.focus(); cx.notify(); })
-        .child(m ?? "local");
+        .child(m ?? localName());
     };
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)

@@ -10,7 +10,7 @@
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
-import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec } from "herdr";
+import { run, props, closeOverlay, openOverlay, theme, keys, terminals, spaces, panes, exec, shared } from "herdr";
 
 // Where a space is now: its first terminal's live folder, else where it was made.
 function place(s) {
@@ -102,7 +102,7 @@ function items(p, git) {
       const boss = starterName(term, all);
       return panes().some((p) => p.terminal === term.address)
         ? [["Go to tab", "pane.focus", { terminal: term.address }], ...(boss ? [[`Send back to ${boss}`, `my-tabs.sendback ${term.address}`]] : [])]
-        : [["Keep as tab", `my-tabs.keep ${term.address}`, undefined, machineOf(term.address) ?? "local"], ["Peek", `my-tabs.peek ${term.address}`]];
+        : [["Keep as tab", `my-tabs.keep ${term.address}`, undefined, machineOf(term.address) ?? (shared("my-projects.local") || "local")], ["Peek", `my-tabs.peek ${term.address}`]];
     }
     case "space":
       return [

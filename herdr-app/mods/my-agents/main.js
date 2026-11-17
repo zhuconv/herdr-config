@@ -4,7 +4,7 @@
 import { View, div, image, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { agents, terminals, panes, focused, spaces, run, theme, shared, setShared, setAgentOrder, openOverlay, closeOverlay, props, window, layout } from "herdr";
-import { agentKeys, withBackground, sessionTitle, projectOf, starters, filedPane } from "./projects.js";
+import { agentKeys, withBackground, sessionTitle, projectOf, starters, filedPane, LOCAL_KEY } from "./projects.js";
 
 // my-agents: background sessions too (`claude attach` to one), which Herdr's agents() leaves
 // out: projects.js withBackground (a copy of mods/my-projects/model.js).
@@ -216,7 +216,7 @@ export default class Agents extends View {
       .text_color(t.dim)
       .cursor_pointer()
       .hover((s) => s.bg(t.hover).text_color(t.foreground))
-      .tooltip(`Keep as a tab on ${machine ?? "local"}`)
+      .tooltip(`Keep as a tab on ${machine ?? (shared(LOCAL_KEY) || "local")}`)
       .on_click((_e, cx) => {
         cx.stop_propagation();
         run(`my-tabs.keep ${k.address}`);

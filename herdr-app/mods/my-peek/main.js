@@ -8,7 +8,7 @@
 
 import { View, div, image, svg } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { agents, terminals, panes, run, theme, props, closeOverlay } from "herdr";
+import { agents, terminals, panes, run, theme, props, closeOverlay, shared } from "herdr";
 
 const SPIN = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 // The icon from the app's program table: a one-color glyph or a picture.
@@ -87,7 +87,7 @@ export default class Peek extends View {
               closeOverlay(overlay);
               run("pane.focus", { terminal });
             })
-          : this.button(t, "keep", h_flex().gap(5).items_center().child(out).child("keep"), `Keep as a tab on ${machineOf(terminal) ?? "local"}`, () => {
+          : this.button(t, "keep", h_flex().gap(5).items_center().child(out).child("keep"), `Keep as a tab on ${machineOf(terminal) ?? (shared("my-projects.local") || "local")}`, () => {
               closeOverlay(overlay);
               run(`my-tabs.keep ${terminal}`);
             }),

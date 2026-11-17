@@ -131,6 +131,11 @@ export function addDir(state, key, to) {
 // per account), where Claude hangs or is killed (it runs inside idev, on a compute node).
 // Starting work in a directory there opens a plain terminal instead.
 export const LOGIN_NODES = ["vista", "vista2", "vista3"];
+
+// This computer's name as hc calls it (hc server status: core.name); Herdr calls it null. The
+// Projects panel finds it once and keeps it in shared state under this key, where the labels
+// that name a machine read it; "local" until then, or when the core has no name.
+export const LOCAL_KEY = "my-projects.local";
 export const agentsRunOn = (machine) => !LOGIN_NODES.includes(machine ?? "");
 
 // New directory…'s path suggestions. The typed path as the folder it's in (as typed, up to its
@@ -223,7 +228,7 @@ export function withGroup(order, keys) {
   return [...order.filter((k) => !mine.has(k)), ...keys];
 }
 
-export function group(convs, state, { home, order = [], pills: pillOrder = [] } = {}) {
+export function group(convs, state, { home, order = [], pills: pillOrder = [], local = "local" } = {}) {
   const maps = new Map(state.projects.map((p) => [p.name, new Map()]));
   const loose = new Map();
   const add = (map, key) => { if (!map.has(key)) map.set(key, []); return map.get(key); };
@@ -236,7 +241,7 @@ export function group(convs, state, { home, order = [], pills: pillOrder = [] } 
   const pills = (map) => orderPills([...map.entries()].map(([key, list]) => {
     const { machine, path } = splitDir(key);
     return {
-      key, machine, path, label: machine ?? "local",
+      key, machine, path, label: machine ?? local,
       detail: isHome(path, machine ? null : home) ? "~" : baseName(path),
       convs: [...list].sort((a, b) => (a.order ?? 0) - (b.order ?? 0)),
     };

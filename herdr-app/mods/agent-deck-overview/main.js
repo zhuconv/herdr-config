@@ -4,7 +4,10 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, Popup } from "gpui-base";
-import { spaces, agents, terminals, panes, run, hc, theme, props, closeOverlay, openOverlay, settings, nextCommand } from "herdr";
+import { spaces, agents, terminals, panes, run, hc, theme, props, closeOverlay, openOverlay, settings, nextCommand, shared } from "herdr";
+// local: this computer by the name hc gives it, as the left panel shows it (mods/my-projects
+// keeps it in shared "my-projects.local"), else "This computer".
+const thisComputer = () => shared("my-projects.local") || "This computer";
 import { parseUsage, usageArgs } from "./usage.js";
 import { customLabels, taskMatches, taskCounts, NO_TASK, saveTaskFilter, loadTaskFilter } from "./labels.js";
 import { SESSION_OF, sessionFrom, resumeLink, machineOf as machineOfAddress } from "./resume.js";
@@ -377,7 +380,7 @@ export default class Overview extends View {
     const machineOfAgent = (a) => spaceOf.get(a.space)?.machine ?? null;
     const words = this.query.toLowerCase().split(/\s+/).filter(Boolean);
     const shownAgents = all.filter((a) => taskMatches(byAddress.get(a.address)?.labels, this.taskFilter)
-      && matches(words, chatName(a), a.program?.name, WORD[a.status], a.space_name, a.tab_name, machineOfAgent(a) ?? "this computer local"));
+      && matches(words, chatName(a), a.program?.name, WORD[a.status], a.space_name, a.tab_name, machineOfAgent(a) ?? `this computer local ${thisComputer()}`)); // local: its name too
     // Filtering by words or by task: tabs read `shown/all`, empty lanes `No match`.
     const filtering = words.length > 0 || this.taskFilter !== null;
 
@@ -392,7 +395,7 @@ export default class Overview extends View {
         return h_flex().id(`ov-m-${m ?? "local"}`).gap(6).items_center().px(8).py(3).rounded(6).bg(t.surface).text_size(11).text_color(t.dim)
           .tooltip(`${connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ")}${machine?.version ? ` · hc ${machine.version}` : ""} · ${terms.length} terminals${hidden ? `, ${hidden} hidden` : ""}`)
           .child(div().size(7).rounded(4).flex_none().bg(connected ? t.ansi2 : t.dim))
-          .child(div().text_color(t.foreground).child(m ?? "This computer"))
+          .child(div().text_color(t.foreground).child(m ?? thisComputer())) // local: its name
           .child(div().child(`${n} agent${n === 1 ? "" : "s"} · ${terms.length} terms`));
       }));
 
@@ -413,7 +416,7 @@ export default class Overview extends View {
           .children(groups.map(([m, g]) => v_flex().id(`ov-${k}-${m ?? "local"}`).gap(6).flex_none()
             .child(h_flex().gap(6).items_center().px(2).text_size(11).text_color(t.dim)
               .child(svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(12).flex_none())
-              .child(div().flex_1().truncate().child(m ?? "This computer"))
+              .child(div().flex_1().truncate().child(m ?? thisComputer())) // local: its name
               .child(div().child(String(g.length))))
             // Several cards to a line when the lane is wide enough.
             .child(h_flex().flex_wrap().items_start().gap(6).children(g.map((a) => this.card(t, a, tabs.get(a.tab), now, byAddress.get(a.address)?.labels)))))));
@@ -433,7 +436,7 @@ export default class Overview extends View {
       return v_flex().id(`ov-tlane-${m ?? "local"}`).flex_1().min_w(0).min_h(0).rounded(10).bg(t.chrome).border(1).border_color(t.border)
         .child(h_flex().h(36).flex_none().px(12).gap(8).items_center().border_b(2).border_color(connected ? t.ansi2 : t.border)
           .child(svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(13).flex_none().text_color(t.muted))
-          .child(div().flex_shrink_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(m ?? "This computer"))
+          .child(div().flex_shrink_1().min_w(0).truncate().font_semibold().text_color(t.foreground).child(m ?? thisComputer())) // local: its name
           .child(div().flex_none().text_size(11).text_color(t.dim).child([`${list.length}`, busyN && `${busyN} running`, hidden && `${hidden} hidden`].filter(Boolean).join(" · ")))
           .child(div().flex_1())
           .when(connected, (el) => el.child(div().id(`ov-tnew-${m ?? "local"}`).flex_none().p(3).rounded(4).text_color(t.dim).cursor_pointer()
