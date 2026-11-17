@@ -281,7 +281,7 @@ export const runsAgent = (p, reported, keys) =>
 // The state of a session that reports none to Herdr (a background one, `claude attach`), from
 // its terminal's labels: note.job, which the tab bar sets from Claude Code's own record of the
 // session (mods/my-tabs/jobs.js: "working", "blocked", "done" until you look, "idle"); else
-// note.state from the agent-note hook (claude/agent-note: "working" from a prompt until the
+// note.state from the agent-note hook (agent-note-hook/agent-note: "working" from a prompt until the
 // reply ends, else "idle"), as on another machine; null without either.
 export const noteStatus = (labels) => {
   const job = labels?.["note.job"], s = labels?.["note.state"];

@@ -71,7 +71,7 @@ export function forkArgv(found) {
   return ["claude", "--resume", found.session, "--fork-session", ...(name ? ["-n", name] : [])];
 }
 
-// Where the hook (claude/agent-note) says the pane's conversation runs when that is another host
+// Where the hook (agent-note-hook/agent-note) says the pane's conversation runs when that is another host
 // than the pane's machine, a compute node the pane shows through ssh or idev: its labels
 // note.session, note.host and note.cwd as { session, host, cwd }. null when they don't say so.
 export function elsewhere(labels) {

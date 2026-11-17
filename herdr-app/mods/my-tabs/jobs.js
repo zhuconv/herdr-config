@@ -14,7 +14,7 @@ const DORMANT = "send a prompt to start";
 // says how the last turn ended) until the turn ends; "blocked" while it waits for you. "idle":
 // the turn ended, and state says how: "done", "blocked", or "working" when it waits on work of
 // its own (a background task, a sub-agent), which wakes it again. Anything else is idle.
-// claude/agent-note has the same rules (job_status), for other machines.
+// agent-note-hook/agent-note has the same rules (job_status), for other machines.
 export function jobStatus(r) {
   if (!r || typeof r !== "object") return null;
   if (r.tempo === "active") return "working";

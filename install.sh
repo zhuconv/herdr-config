@@ -13,9 +13,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Codex in Herdr's terminals runs its sessions itself (--no-daemon), so the hook knows their
-# terminal: the codex shell function in claude/codex.sh, loaded by this line in ~/.bashrc and
+# terminal: the codex shell function in agent-note-hook/codex.sh, loaded by this line in ~/.bashrc and
 # ~/.zshrc (each one there, and the login shell's even if not yet; added once, after a copy).
-RC_LINE='if [ -f "$HOME/.local/share/agent-note/codex.sh" ]; then . "$HOME/.local/share/agent-note/codex.sh"; fi  # agent-note: Codex in Herdr terminals (herdr-config claude/codex.sh)'
+RC_LINE='if [ -f "$HOME/.local/share/agent-note/codex.sh" ]; then . "$HOME/.local/share/agent-note/codex.sh"; fi  # agent-note: Codex in Herdr terminals (herdr-config agent-note-hook/codex.sh)'
 ADD_RC='for f in "$HOME/.bashrc" "$HOME/.zshrc"; do
   case $f in */."${SHELL##*/}"rc) ;; *) [ -f "$f" ] || continue ;; esac
   grep -qsF share/agent-note/codex.sh "$f" && continue
@@ -37,13 +37,13 @@ trust_on() { # machine
 
 if [ "${1:-}" = "--remote" ]; then
   m=${2:?usage: ./install.sh --remote <machine>}
-  hc file write --on "$m" .local/bin/agent-note <claude/agent-note >/dev/null
+  hc file write --on "$m" .local/bin/agent-note <agent-note-hook/agent-note >/dev/null
   hc exec --on "$m" -- chmod +x .local/bin/agent-note
-  hc exec --on "$m" -i -- python3 - <claude/merge-hooks.py
-  hc exec --on "$m" -i -- python3 - <claude/merge-codex-hooks.py
+  hc exec --on "$m" -i -- python3 - <agent-note-hook/add-to-claude.py
+  hc exec --on "$m" -i -- python3 - <agent-note-hook/add-to-codex.py
   hc exec --on "$m" -- mkdir -p .local/share/agent-note
-  hc file write --on "$m" .local/share/agent-note/codex.sh <claude/codex.sh >/dev/null
-  hc file write --on "$m" .local/bin/codex-hooks-trust <claude/codex-hooks-trust >/dev/null
+  hc file write --on "$m" .local/share/agent-note/codex.sh <agent-note-hook/codex.sh >/dev/null
+  hc file write --on "$m" .local/bin/codex-hooks-trust <agent-note-hook/codex-hooks-trust >/dev/null
   hc exec --on "$m" -- chmod +x .local/bin/codex-hooks-trust
   hc exec --on "$m" -- sh -c "$ADD_RC" sh "$RC_LINE"
   trust_on "$m"
@@ -96,8 +96,8 @@ link_skill hc-workers
 
 # Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart and PreCompact (added once,
 # never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
-python3 claude/merge-hooks.py
-python3 claude/merge-codex-hooks.py
+python3 agent-note-hook/add-to-claude.py
+python3 agent-note-hook/add-to-codex.py
 # Codex in Herdr's terminals runs --no-daemon (see RC_LINE above), and Codex is asked whether it
 # trusts the hooks, which are then trusted with its own hashes if not.
 sh -c "$ADD_RC" sh "$RC_LINE"

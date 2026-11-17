@@ -160,7 +160,7 @@ export default class Tabs extends View {
     // (jobs.js): each one's state goes on its terminal as the label note.job, which the lists
     // read (projects.js noteStatus), and a finish or a question rings as Herdr's own do. A session
     // here is read from Claude Code's record of it; another machine's, from the label its hook
-    // writes there (claude/agent-note: note.bg).
+    // writes there (agent-note-hook/agent-note: note.bg).
     let seen = null;
     try { seen = JSON.parse(localStorage.getItem("jobs.seen") ?? "null"); } catch {}
     this.fresh = !(seen && typeof seen === "object"); // the first run: every ending so far counts as seen
