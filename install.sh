@@ -1,6 +1,7 @@
 #!/bin/bash
 # Sets this Mac's Herdr up like the others: keys, the my-main layout, the mods, the theme,
-# the Claude Code (and Codex) hook behind the ⌃Tab cards, and the Raycast ⌘G script.
+# the Claude Code (and Codex) hook behind the ⌃Tab cards, the hc-workers skill, and the Raycast
+# ⌘G script.
 # Safe to run again to update. Anything it replaces is copied first to
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
 #

@@ -20,6 +20,7 @@ ITEMS=(
   "herdr-app/mods/agent-deck-overview/|$H/mods/agent-deck-overview/"
   "herdr-app/mods/agent-deck-labels/|$H/mods/agent-deck-labels/"
   "claude/agent-note|$HOME/.local/bin/agent-note"
+  "claude/skills/hc-workers/|$HOME/.claude/skills/hc-workers/"
   "raycast/postkey.c|$HOME/.local/share/postkey/postkey.c"
 )
 SKIP=(--exclude gpui-kit.d.ts --exclude jsconfig.json --exclude .DS_Store)
