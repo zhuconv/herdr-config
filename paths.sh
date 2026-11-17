@@ -24,6 +24,7 @@ ITEMS=(
   "agent-note-hook/codex.sh|$HOME/.local/share/agent-note/codex.sh"
   "agent-note-hook/codex-hooks-trust|$HOME/.local/bin/codex-hooks-trust"
   "skills/hc-workers/|$HOME/.agents/skills/hc-workers/"
+  "skills/hc-find/|$HOME/.agents/skills/hc-find/"
   "raycast/postkey.c|$HOME/.local/share/postkey/postkey.c"
 )
 SKIP=(--exclude gpui-kit.d.ts --exclude jsconfig.json --exclude .DS_Store)

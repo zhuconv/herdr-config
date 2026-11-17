@@ -22,6 +22,7 @@
 - **关掉 manager 前先问。** 要关的窗格、tab 或 space 里有终端用 `hc run` 开过别的终端（比如 manager agent 的 worker）时，Herdr 会先问，并列出它们：哪些会继续跑但没法再汇报，哪些会跟着结束。点一个可以 peek 看它，关掉 peek 就回到这个问题。
 - **在别的机器上开 worker。** 装了 `hc-workers` 这个 skill，你对话的那个 agent（manager，Claude 或 Codex 都行）可以在你的各台机器上开 Claude 或 Codex 会话，替它们处理确认提示，把它们的汇报转告给你。它们在 Agents 列表里挂在 manager 下面，你也可以直接打开任何一个，自己指挥。
 - **把 worker 留成 tab。** 鼠标移到 Agents 列表里 worker 那一行，点它的 keep 按钮（或者右键 → Keep as tab，或者在它的 peek 里点 keep）：它变成它自己那台机器上的一个 tab，视图跳过去。这个 tab 跟着启动它的 agent 走，不管它在哪个目录、哪台机器上跑：归到那个 agent 的 project 和胶囊里，在顶部栏里紧跟在它的 tab 后面。它那一行、它的窗格标题栏和左栏里的条目都标出它在哪台机器上。Send back（它的 tab、窗格和那一行的右键菜单里都有）把它送回启动者下面，继续运行。
+- **按名字找会话。** 装了 `hc-find` 这个 skill，agent 能按你平时叫的名字，找到你的另一个 Claude 或 Codex 会话（在它的 hc 连得到的任何机器上），并读它：现在的屏幕，或者最近几轮。要从连得到那台机器的地方问：Mac 全都连得到。
 
 ### 快捷键
 
@@ -97,6 +98,7 @@ git pull && ./install.sh
 | `agent-note-hook/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态；Herdr 没在看它们的记录时用这个兜底。在服务器上它还写 `note.bg`：Claude 记下的这个回合怎么结束的，给 Mac 上的 tab 栏用。用 resume 接回的对话，卡片会马上从对话记录里补上。后台会话的记录写到每个显示它的终端上：`claude attach <id>`，或者标题是该会话名字的 `claude --resume` 窗口。（它带的 `$HC_TERMINAL_ID` 是后台服务的，所以不用。）它还给每个窗格标上对话在哪，给 Fork 用：`note.session`、`note.cwd`，Claude 跑在别的主机（比如计算节点）上时还有 `note.host`。两个回合之间的压缩也由它处理（见上）：PreCompact 时，等 Claude 报告压缩“工作中”后，它清掉窗格的状态（OSC 7501 `state=clear`）。`install.sh` 会把它加进 `~/.claude/settings.json`。Codex 也跑它（`agent-note codex`，由 `agent-note-hook/add-to-codex.py` 加进 `~/.codex/hooks.json`，并在 Codex 的 `config.toml` 里设为信任）：记下同样的内容，另加 `note.ask`，即 Codex 等你批准的那件事。只对自己跑会话的 Codex 有效（`codex --no-daemon`）：Codex 的共享后台进程用它自己的环境跑 hook，所以在那里会跳过。在 Herdr 的终端里，`codex` 命令会自动这样启动（见下一行）。 |
 | `agent-note-hook/codex.sh`、`agent-note-hook/codex-hooks-trust` | hook 在 Codex 这边的配套。`codex.sh` 是一个 `codex` shell 函数，从 `~/.bashrc` 和 `~/.zshrc` 加载（那一行由 `install.sh` 加上）：在 Herdr 的终端里启动的 Codex 会带上 `--no-daemon`（`resume`、`fork` 加在子命令后面），hook 才知道它在哪个终端。其他子命令，以及自己直接启动 codex 程序的程序，都不受影响。`codex-hooks-trust` 问装好的 Codex（`codex app-server` 的 `hooks/list`）是否信任 agent-note 的 hook，不信任就把 Codex 自己算的哈希写进 `config.toml`，这样 relay 或 manager 自动启动的 Codex 不会停在 "Hooks need review"。`install.sh` 会跑它（Vista 上在你的计算节点上跑），`codex` 函数在 codex 程序变了之后也会跑一次。 |
 | `skills/hc-workers/` | worker 用的 skill，Claude Code 和 Codex 都能用。`SKILL.md` 是 manager 的部分：怎么用 `hc run` 开 worker（打上 manager 地址的标签，好列出自己的 worker）、会收到什么（汇报和 hc 的通知）、怎么指挥。`worker.md` 是 manager 贴进每个 worker 任务里的规则。`vista.md` 讲 Slurm 集群：agent 只在计算节点上跑，汇报经 login 节点发出。`install.sh` 照 `npx skills` 的方式装：文件放在 `~/.agents/skills/hc-workers/`（Codex 从这里读 skill），再在 `~/.claude/skills/` 里放一个指向它的链接给 Claude Code（用 `npx skills add` 加这个仓库也能找到它） |
+| `skills/hc-find/` | 按名字找会话的 skill，Claude Code 和 Codex 都能用。`find.py` 一次调用拿到 hc 看得到的所有终端，按名字匹配（有人起过名的 tab、会话标题、hc 名、地址，或会话 id 的开头），再到会话所在的机器上运行自己，从 Claude Code 或 Codex 自己的记录里找到对话记录。`install.sh` 像装 hc-workers 一样装它 |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常是"查找下一个" |
 | `install.sh`、`save.sh`、`paths.sh` | 安装、存回仓库，以及同步哪些文件的清单 |
 | `docs/` | 可点击模型（GitHub Pages 发布）和截图。`index.html` 是设计画布的文件换成示例名字后的版本；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |

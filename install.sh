@@ -1,14 +1,15 @@
 #!/bin/bash
 # Sets this Mac's Herdr up like the others: keys, the my-main layout, the mods, the theme,
-# the Claude Code (and Codex) hook behind the ⌃Tab cards, the hc-workers skill (for Claude Code and
-# Codex), and the Raycast ⌘G script.
+# the Claude Code (and Codex) hook behind the ⌃Tab cards, the hc-workers and hc-find skills (for
+# Claude Code and Codex), and the Raycast ⌘G script.
 # Safe to run again to update. Anything it replaces is copied first to
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
 #
 #   ./install.sh --remote <machine>   (a machine from `hc machine ls`)
 # puts the hook on that machine, so Claude and Codex sessions running there in Herdr terminals
 # fill their ⌃Tab cards too (codex there runs --no-daemon in them, and Codex is asked to trust the
-# hook), and the hc-workers skill, so an agent there can be a manager. It needs python3 there.
+# hook), and the hc-workers and hc-find skills, so an agent there can be a manager and find a
+# session by its name. It needs python3 there.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -47,15 +48,17 @@ if [ "${1:-}" = "--remote" ]; then
   hc exec --on "$m" -- chmod +x .local/bin/codex-hooks-trust
   hc exec --on "$m" -- sh -c "$ADD_RC" sh "$RC_LINE"
   trust_on "$m"
-  # The skill as on a Mac (see below): one copy in ~/.agents/skills, a link in ~/.claude/skills.
-  hc exec --on "$m" -- rm -rf .agents/skills/hc-workers
-  for f in skills/hc-workers/*; do
-    hc file write --on "$m" ".agents/skills/hc-workers/${f##*/}" <"$f" >/dev/null
+  # The skills as on a Mac (see below): one copy in ~/.agents/skills, a link in ~/.claude/skills.
+  for s in hc-workers hc-find; do
+    hc exec --on "$m" -- rm -rf ".agents/skills/$s"
+    for f in "skills/$s"/*; do
+      hc file write --on "$m" ".agents/skills/$s/${f##*/}" <"$f" >/dev/null
+    done
+    hc exec --on "$m" -- sh -c 'd=$HOME/.claude/skills/$1; mkdir -p "${d%/*}"
+      if [ -L "$d" ] || [ ! -e "$d" ]; then ln -sfn "../../.agents/skills/$1" "$d"
+      else echo "$d is a folder, so Claude Code keeps that copy" >&2; fi' sh "$s"
   done
-  hc exec --on "$m" -- sh -c 'd=$HOME/.claude/skills/hc-workers; mkdir -p "${d%/*}"
-    if [ -L "$d" ] || [ ! -e "$d" ]; then ln -sfn ../../.agents/skills/hc-workers "$d"
-    else echo "$d is a folder, so Claude Code keeps that copy" >&2; fi'
-  echo "$m: agent-note, the codex function and the hc-workers skill are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
+  echo "$m: agent-note, the codex function and the hc-workers and hc-find skills are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
   exit 0
 fi
 
@@ -93,6 +96,7 @@ link_skill() { # name
   ln -s "../../.agents/skills/$1" "$d"
 }
 link_skill hc-workers
+link_skill hc-find
 
 # Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart and PreCompact (added once,
 # never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
