@@ -354,7 +354,9 @@ export class Reopener {
     const shown = new Set(this.h.panes().map((p) => p.terminal).filter(Boolean));
     for (const p of rec.panes) {
       const t = list.find((x) => x.address === p.terminal);
-      if (t?.state === "live" && !shown.has(p.terminal) && !t.labels?.["herdr.space"]) this.h.run("terminal.kill", { terminal: p.terminal });
+      // Through hc: Herdr's terminal.kill also ends the terminal's children, even those started
+      // with --outlive-parent (a manager's workers, meant to outlive it); hc's kill keeps them.
+      if (t?.state === "live" && !shown.has(p.terminal) && !t.labels?.["herdr.space"]) this.h.hc(["kill", p.terminal]).catch(() => {});
     }
     rec.expired = true;
     return true;

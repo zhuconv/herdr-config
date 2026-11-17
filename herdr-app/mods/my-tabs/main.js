@@ -110,14 +110,19 @@ export default class Tabs extends View {
         try {
           // "close" (⌘W), "close <tab or pane>" (a tab's ×, the tab menu), "close kill <pane>" and
           // "close space <id>" (mods/my-menu): each asks first when the terminals it ends have
-          // running children (ask.js). "close-confirmed <tab or pane>" is that dialog's yes.
+          // running children (ask.js). "close-confirmed …" is that dialog's yes, in the same forms.
           if (c === "close" || c.startsWith("close ")) {
             const arg = c.slice(6).trim();
             if (arg.startsWith("kill ")) this.killPane(arg.slice(5).trim());
             else if (arg.startsWith("space ")) this.closeSpace(arg.slice(6).trim());
             else this.closeTab(cx, arg || null);
           }
-          else if (c.startsWith("close-confirmed ")) this.closeTab(cx, c.slice(16).trim(), true);
+          else if (c.startsWith("close-confirmed ")) {
+            const arg = c.slice(16).trim();
+            if (arg.startsWith("kill ")) await this.endPane(cx, arg.slice(5).trim());
+            else if (arg.startsWith("space ")) await this.endSpace(cx, arg.slice(6).trim());
+            else this.closeTab(cx, arg, true);
+          }
           else if (c === "new-tab") this.newTab();
           else if (c === "reopen") await this.reopen.reopen(cx);
           else if (c === "waiting" || c === "waiting away") this.goWaiting(c === "waiting away");
@@ -444,7 +449,7 @@ export default class Tabs extends View {
   killPane(id) {
     const p = panes().find((x) => x.pane === id);
     const kids = p?.terminal ? childrenOf(terminals(), [p.terminal]) : [];
-    if (kids.length) askClose({ what: "pane", name: p.title || p.terminal, command: "pane.close", args: { pane: id }, kids, when: "It ends at once." });
+    if (kids.length) askClose({ what: "pane", name: p.title || p.terminal, command: `my-tabs.close-confirmed kill ${id}`, kids, when: "It ends at once." });
     else run("pane.close", { pane: id });
   }
 
@@ -454,8 +459,33 @@ export default class Tabs extends View {
     const s = spaces().find((x) => x.id === id);
     const tabs = new Set((s?.tabs ?? []).map((t) => t.id));
     const kids = childrenOf(terminals(), panes().filter((p) => p.terminal && tabs.has(p.tab)).map((p) => p.terminal));
-    if (kids.length) askClose({ what: "space", name: s?.name || id, command: "space.close", args: { id, confirmed: true }, kids, when: "Its terminals end at once." });
+    if (kids.length) askClose({ what: "space", name: s?.name || id, command: `my-tabs.close-confirmed space ${id}`, kids, when: "Its terminals end at once." });
     else run("space.close", { id });
+  }
+
+  // Close pane, once the dialog said yes: the pane goes as with pane.close, but its terminal ends
+  // through hc. Herdr's pane.close and terminal.kill end the terminal's children too, even those
+  // started with --outlive-parent (a manager's workers); hc's kill keeps them, as the dialog says.
+  async endPane(cx, id) {
+    const term = panes().find((x) => x.pane === id)?.terminal;
+    if (!term) {
+      run("pane.close", { pane: id });
+      return;
+    }
+    run("terminal.park", { terminal: term });
+    await cx.sleep(300);
+    await hc(["kill", term]).catch(() => {});
+  }
+
+  // A space's Close, once the dialog said yes: its terminals are parked (the space goes with its
+  // last pane; space.close takes what's left, e.g. mod panes), then end through hc, as in endPane.
+  async endSpace(cx, id) {
+    const tabs = new Set((spaces().find((x) => x.id === id)?.tabs ?? []).map((t) => t.id));
+    const terms = panes().filter((p) => p.terminal && tabs.has(p.tab)).map((p) => p.terminal);
+    for (const t of terms) run("terminal.park", { terminal: t });
+    await cx.sleep(300);
+    if (spaces().some((x) => x.id === id)) run("space.close", { id, confirmed: true });
+    for (const t of terms) await hc(["kill", t]).catch(() => {});
   }
 
   // ⌘T ("new-tab" in keys.json): a new tab in the shown space, as Herdr's tab.new. On a machine
