@@ -1,13 +1,14 @@
 #!/bin/bash
 # Sets this Mac's Herdr up like the others: keys, the my-main layout, the mods, the theme,
-# the Claude Code (and Codex) hook behind the ⌃Tab cards, the hc-workers skill, and the Raycast
-# ⌘G script.
+# the Claude Code (and Codex) hook behind the ⌃Tab cards, the hc-workers skill (for Claude Code and
+# Codex), and the Raycast ⌘G script.
 # Safe to run again to update. Anything it replaces is copied first to
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
 #
 #   ./install.sh --remote <machine>   (a machine from `hc machine ls`)
-# puts only the hook on that machine, so Claude sessions running there in Herdr
-# terminals fill their ⌃Tab cards too (and Codex ones run --no-daemon). It needs python3 there.
+# puts the hook on that machine, so Claude sessions running there in Herdr terminals fill
+# their ⌃Tab cards too (and Codex ones run --no-daemon), and the hc-workers skill, so an agent
+# there can be a manager. It needs python3 there.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -17,7 +18,15 @@ if [ "${1:-}" = "--remote" ]; then
   hc exec --on "$m" -- chmod +x .local/bin/agent-note
   hc exec --on "$m" -i -- python3 - <claude/merge-hooks.py
   hc exec --on "$m" -i -- python3 - <claude/merge-codex-hooks.py
-  echo "$m: agent-note is in place. Claude sessions there pick it up on their next prompt, Codex ones when they start."
+  # The skill as on a Mac (see below): one copy in ~/.agents/skills, a link in ~/.claude/skills.
+  hc exec --on "$m" -- rm -rf .agents/skills/hc-workers
+  for f in skills/hc-workers/*; do
+    hc file write --on "$m" ".agents/skills/hc-workers/${f##*/}" <"$f" >/dev/null
+  done
+  hc exec --on "$m" -- sh -c 'd=$HOME/.claude/skills/hc-workers; mkdir -p "${d%/*}"
+    if [ -L "$d" ] || [ ! -e "$d" ]; then ln -sfn ../../.agents/skills/hc-workers "$d"
+    else echo "$d is a folder, so Claude Code keeps that copy" >&2; fi'
+  echo "$m: agent-note and the hc-workers skill are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new sessions see the skill."
   exit 0
 fi
 
@@ -44,6 +53,17 @@ for item in "${ITEMS[@]}"; do
   rsync -a --delete "${SKIP[@]}" "$src" "$dst"
 done
 chmod +x "$HOME/.local/bin/agent-note"
+
+# Skills are laid out as `npx skills` installs them: one copy in ~/.agents/skills (paths.sh puts it
+# there), which Codex reads, and a link to it in ~/.claude/skills for Claude Code.
+link_skill() { # name
+  local d="$HOME/.claude/skills/$1"
+  [ "$(readlink "$d" 2>/dev/null)" = "../../.agents/skills/$1" ] && return
+  if [ -e "$d" ] || [ -L "$d" ]; then keep "$d"; rm -rf "$d"; fi
+  mkdir -p "$HOME/.claude/skills"
+  ln -s "../../.agents/skills/$1" "$d"
+}
+link_skill hc-workers
 
 # Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart and PreCompact (added once,
 # never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).

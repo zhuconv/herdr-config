@@ -20,7 +20,7 @@
 - **后台会话也算。** 用 `claude attach` 打开的会话也出现在面板、tab 栏和 Agents 列表里，状态和前台 agent 一样：工作中、需要你、做完了（看过之前一直显示）。做完或需要你时，弹 Herdr 同样的提示、响同样的声音，⌘G 也能跳过去。状态取自 Claude Code 自己给每个会话记的记录，Mac 上的和服务器上的都算（`./install.sh --remote <机器>` 把 hook 装到服务器上）。
 - **压缩对话不提醒。** Claude 在两个回合之间压缩对话时，会当成一个回合做完来报告。这包括它在空闲时自己做的压缩（长对话在最后一次回复约一小时后、prompt 缓存过期之前），也包括 `/compact`，所以 Herdr 会当成这个会话又做完了一次来提醒你。hook 在压缩开始时清掉窗格的状态，Herdr 就把压缩结束当成已经看过：不响声音、不弹提示，也不显示“做完了”。还没看过的完成照样保留标记。如果压缩开始时 Claude 本来就在工作（子代理的压缩，或者回合结束后后台代理还在跑），hook 就不动状态：这种压缩结束时 Claude 什么也不报告，状态清掉后会一直空着，通过 ssh 跑的 Claude 就会从 Agents 列表和 Projects 面板里消失。
 - **关掉 manager 前先问。** 要关的窗格、tab 或 space 里有终端用 `hc run` 开过别的终端（比如 manager agent 的 worker）时，Herdr 会先问，并列出它们：哪些会继续跑但没法再汇报，哪些会跟着结束。点一个可以 peek 看它，关掉 peek 就回到这个问题。
-- **在别的机器上开 worker。** 装了 `hc-workers` 这个 skill，你对话的那个 Claude（manager）可以在你的各台机器上开 Claude 或 Codex 会话，替它们处理确认提示，把它们的汇报转告给你。它们在 Agents 列表里挂在 manager 下面，你也可以直接打开任何一个，自己指挥。
+- **在别的机器上开 worker。** 装了 `hc-workers` 这个 skill，你对话的那个 agent（manager，Claude 或 Codex 都行）可以在你的各台机器上开 Claude 或 Codex 会话，替它们处理确认提示，把它们的汇报转告给你。它们在 Agents 列表里挂在 manager 下面，你也可以直接打开任何一个，自己指挥。
 
 ### 快捷键
 
@@ -54,7 +54,7 @@ gh repo clone zhuconv/herdr-config ~/herdr-config && ~/herdr-config/install.sh
 
 ## 远程机器
 
-在远程机器的 Herdr 终端里跑的 Claude 会话，也能填 ⌃Tab 卡片、显示工作中/空闲，前提是那台机器装了 hook（那台需要有 `python3`）：
+在远程机器的 Herdr 终端里跑的 Claude 会话，也能填 ⌃Tab 卡片、显示工作中/空闲，前提是那台机器装了 hook（那台需要有 `python3`）。同一条命令也会把 `hc-workers` skill 装过去，这样那台机器上的 agent 也能当 manager：
 
 ```sh
 ./install.sh --remote <机器名>      # 来自 hc machine ls；每台机器跑一次
@@ -93,7 +93,7 @@ git pull && ./install.sh
 | `herdr-app/mods/agent-deck-*` | Overview 面板，来自 [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
 | `herdr-app/settings.json`、`themes/warp-dracula.json` | 字体、主题、缩放、提示音。`option_as_alt: "on"` 让 Option 在任何输入法下都当 Alt 用：用中文输入法的中文模式时，Herdr 默认把 ⌥1 交给输入法，于是打出字来，而不是切换 project |
 | `claude/agent-note` | Claude Code hook：记下你最近一条 prompt 的开头和回复的结尾，给 ⌃Tab 卡片用；同时给后台会话打 `note.state` 标签（工作中/空闲），因为它们不向 Herdr 报告状态；Herdr 没在看它们的记录时用这个兜底。在服务器上它还写 `note.bg`：Claude 记下的这个回合怎么结束的，给 Mac 上的 tab 栏用。用 resume 接回的对话，卡片会马上从对话记录里补上。后台会话的记录写到每个显示它的终端上：`claude attach <id>`，或者标题是该会话名字的 `claude --resume` 窗口。（它带的 `$HC_TERMINAL_ID` 是后台服务的，所以不用。）它还给每个窗格标上对话在哪，给 Fork 用：`note.session`、`note.cwd`，Claude 跑在别的主机（比如计算节点）上时还有 `note.host`。两个回合之间的压缩也由它处理（见上）：PreCompact 时，等 Claude 报告压缩“工作中”后，它清掉窗格的状态（OSC 7501 `state=clear`）。`install.sh` 会把它加进 `~/.claude/settings.json`。Codex 也跑它（`agent-note codex`，由 `claude/merge-codex-hooks.py` 加进 `~/.codex/hooks.json`，并在 Codex 的 `config.toml` 里设为信任）：记下同样的内容，另加 `note.ask`，即 Codex 等你批准的那件事。只对自己跑会话的 Codex 有效（`codex --no-daemon`）：Codex 的共享后台进程用它自己的环境跑 hook，所以在那里会跳过。 |
-| `claude/skills/hc-workers/` | worker 用的 Claude Code skill。`SKILL.md` 是 manager 的部分：怎么用 `hc run` 开 worker（打上 manager 地址的标签，好列出自己的 worker）、会收到什么（汇报和 hc 的通知）、怎么指挥。`worker.md` 是 manager 贴进每个 worker 任务里的规则。`vista.md` 讲 Slurm 集群：agent 只在计算节点上跑，汇报经 login 节点发出。`install.sh` 把它装到 `~/.claude/skills/hc-workers/` |
+| `skills/hc-workers/` | worker 用的 skill，Claude Code 和 Codex 都能用。`SKILL.md` 是 manager 的部分：怎么用 `hc run` 开 worker（打上 manager 地址的标签，好列出自己的 worker）、会收到什么（汇报和 hc 的通知）、怎么指挥。`worker.md` 是 manager 贴进每个 worker 任务里的规则。`vista.md` 讲 Slurm 集群：agent 只在计算节点上跑，汇报经 login 节点发出。`install.sh` 照 `npx skills` 的方式装：文件放在 `~/.agents/skills/hc-workers/`（Codex 从这里读 skill），再在 `~/.claude/skills/` 里放一个指向它的链接给 Claude Code（用 `npx skills add` 加这个仓库也能找到它） |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常是"查找下一个" |
 | `install.sh`、`save.sh`、`paths.sh` | 安装、存回仓库，以及同步哪些文件的清单 |
 | `docs/` | 可点击模型（GitHub Pages 发布）和截图。`index.html` 是设计画布的文件换成示例名字后的版本；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |

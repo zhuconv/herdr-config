@@ -35,7 +35,7 @@ hc's own manual is `hc --skill`. Where it differs from this skill, this skill wi
 **Start a worker**
 
 1. Take the machine, folder and task from the user's words, and ask only for what they leave open. `hc machine ls --json | jq -r '.machines[].name'` lists the machines. For vista, vista2 and vista3, follow `vista.md` in place of steps 2–3.
-2. Start it from your Bash tool:
+2. Start it from your shell:
 
    ```sh
    me="$(hc server status --json | jq -r .core.name)/$HC_TERMINAL_ID"
@@ -61,13 +61,13 @@ hc's own manual is `hc --skill`. Where it differs from this skill, this skill wi
 **While workers run**
 
 - When news arrives, read the worker's screen, or the file its report names, before telling the user anything.
-- Settle prompts and dialogs yourself: read the screen, then press the answer with `hc keys`. Answer a worker's question yourself when the task settles it. Bring the user only missing key information or a key decision, including a risky action that auto mode blocked.
+- Settle prompts and dialogs yourself: read the screen, then press the answer with `hc keys`. Answer a worker's question yourself when the task settles it. Bring the user only missing key information or a key decision, including a risky action that its permission checks blocked.
 - Before you steer, read the worker's screen: the user may have steered it directly. Build on what they told it, and when your plan conflicts with theirs, ask the user.
 
 **Finish:** when the user agrees a worker is done, `hc kill <address>`, then `hc rm <address>`.
 
 ### Caveats
 
-- Start every worker yourself, with `hc run` from your Bash tool. That makes you its parent: you get its notes, it nests under you in the Agents list, and its machine may send to you. A session started any other way (`hcx`, Herdr's +, a tab the user opens) has none of these.
+- Start every worker yourself, with `hc run` from your shell. That makes you its parent: you get its notes, it nests under you in the Agents list, and its machine may send to you. A session started any other way (`hcx`, Herdr's +, a tab the user opens) has none of these.
 - A bare `tN` names a terminal on the machine where hc runs, so workers always get your full `$me`.
 - Keep the goal in the quoted heredoc, so its quotes and `$` reach the worker unchanged.
