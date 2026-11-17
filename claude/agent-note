@@ -44,8 +44,12 @@ working again, so the next UserPromptSubmit says it for Claude if the status is 
 On a cluster compute node the terminal's hc runs on the login node. There the label goes
 through `ssh <login node>`: $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev session.
 (Vista: plain ssh from a node to login1 needs no MFA; BatchMode=yes would break it.)
+
+Codex runs it too, as `agent-note codex` (~/.codex/hooks.json, see codex() below), for the same
+notes plus note.ask, what it waits for your approval on.
 """
 import base64
+import glob
 import json
 import os
 import re
@@ -61,6 +65,8 @@ from datetime import datetime, timezone
 
 def main():
     event = json.load(sys.stdin)
+    if sys.argv[1:2] == ["codex"]:
+        return codex(event)
     job, own = os.environ.get("CLAUDE_JOB_DIR"), os.environ.get("HC_TERMINAL_ID")
     name = event.get("hook_event_name")
     if name == "PreCompact" or (name == "SessionStart" and event.get("source") == "compact"):
@@ -103,6 +109,141 @@ def main():
         value = bg_state(job)
         for term in terms:
             label(term, f"note.bg={value}")
+
+
+def codex(event):
+    """Codex runs this hook too, from ~/.codex/hooks.json as `agent-note codex`. Its hooks give the
+    same input as Claude Code's, and the same notes go on its terminal: note.prompt, note.said,
+    note.state, note.session (the thread's id), note.cwd and note.host. One more, note.ask: what a
+    Codex waiting for your approval wants to do (PermissionRequest), for a client that answers it
+    from elsewhere. It goes
+    when the tool runs (PostToolUse), the turn ends (Stop) or is cut off (Interrupt, as when you
+    say no), or a prompt comes.
+    Only a Codex that runs its session itself: `codex --no-daemon`, or with -c/--enable options.
+    By default Codex hands sessions to a shared background server, which runs their hooks with
+    its own environment, the $HC_TERMINAL_ID of whichever terminal started it: nested() leaves
+    those alone."""
+    own, name = os.environ.get("HC_TERMINAL_ID"), event.get("hook_event_name")
+    if not own or event.get("agent_id"):
+        return  # outside hc; or a subagent's (Guardian review, …), which has its parent's session id
+    sid = event.get("session_id") or ""
+    if name == "PostToolUse":
+        # The tool ran, so an approval it waited for was given. Only then an hc call: this runs
+        # after every tool.
+        if forget_ask(sid):
+            label(own, "note.ask=")
+        return
+    if nested():
+        return
+    if name == "UserPromptSubmit":
+        prompt = " ".join((event.get("prompt") or "").split())[:160]
+        pairs = ("note.state=working", *([f"note.prompt={prompt}"] if prompt else []), "note.ask=")
+    elif name == "Stop":
+        reply = gist(event.get("last_assistant_message") or codex_last(event)[1])
+        pairs = ("note.state=idle", *([f"note.said={reply}"] if reply else []), "note.ask=")
+    elif name == "Interrupt":
+        pairs = ("note.state=idle", "note.ask=")
+    elif name == "PermissionRequest":
+        os.makedirs(os.path.dirname(asking(sid)), exist_ok=True)
+        open(asking(sid), "w").close()
+        pairs = (f"note.ask={asked(event)}",)
+    elif name == "SessionStart":
+        source = event.get("source")
+        if source in ("resume", "fork"):
+            prompt, reply = codex_last(event)
+            pairs = ("note.state=idle", f"note.prompt={prompt or ''}", f"note.said={gist(reply)}", "note.ask=")
+        elif source in ("startup", "clear"):
+            pairs = ("note.state=idle", "note.prompt=", "note.said=", "note.ask=")
+        else:
+            return  # compact: the same thread, the notes still hold
+    else:
+        return
+    if name != "PermissionRequest":
+        forget_ask(sid)
+    label(own, *pairs, *where(event))
+
+
+def asking(sid):
+    """Marks a Codex session whose note.ask is up, so PostToolUse knows to take it down."""
+    safe = re.sub(r"[^A-Za-z0-9-]", "", sid) or "none"
+    return os.path.join(tempfile.gettempdir(), f"agent-note-{os.getuid()}", "ask-" + safe)
+
+
+def forget_ask(sid):
+    """Takes the mark down; whether there was one."""
+    try:
+        os.remove(asking(sid))
+        return True
+    except OSError:
+        return False
+
+
+def asked(event):
+    """note.ask: {"t": when (UTC), "tool": the tool (Bash, apply_patch, mcp__server__tool),
+    "input": what it was given}, as one line of JSON, long values cut short."""
+    inp = event.get("tool_input")
+    if isinstance(inp, dict):
+        inp = {k: v[:3000] if isinstance(v, str) else v for k, v in list(inp.items())[:20]}
+    else:
+        inp = {"command": str(inp)[:3000]} if inp else {}
+    note = {"t": now(), "tool": str(event.get("tool_name") or ""), "input": inp}
+    s = json.dumps(note, ensure_ascii=False, separators=(",", ":"))
+    return s if len(s) <= 8000 else json.dumps({**note, "input": {}}, separators=(",", ":"))
+
+
+def nested():
+    """Whether this Codex isn't its terminal's own agent, so $HC_TERMINAL_ID isn't its terminal:
+    one that Claude started (its Codex plugin, a command it ran), or a shared app server (Codex's
+    background daemon, the desktop app), which has the environment of whatever started it.
+    Read up the process tree."""
+    pid = os.getppid()
+    for _ in range(12):
+        if pid <= 1:
+            return False
+        out = subprocess.run(["ps", "-o", "ppid=,args=", "-p", str(pid)], capture_output=True, text=True, timeout=3).stdout.strip()
+        ppid, _, args = out.partition(" ")
+        args = args.strip()
+        if not args:
+            return False
+        if os.path.basename(args.split(" ", 1)[0]) == "claude" or "@anthropic-ai/claude-code" in args or " app-server" in " " + args:
+            return True
+        try:
+            pid = int(ppid)
+        except ValueError:
+            return False
+    return False
+
+
+def codex_last(event):
+    """The start of the last prompt in a Codex thread, and the reply to it (None while there's
+    none), read from its records. A resumed thread goes on in a new file
+    (~/.codex/sessions/…/rollout-<time>-<id>_<n>.jsonl), so the newest one that has a prompt."""
+    sid = re.sub(r"[^A-Za-z0-9-]", "", event.get("session_id") or "")
+    home = os.environ.get("CODEX_HOME") or os.path.expanduser("~/.codex")
+    files = glob.glob(os.path.join(home, "sessions", "*", "*", "*", f"rollout-*-{sid}*.jsonl")) if sid else []
+    path = event.get("transcript_path")
+    if path and path not in files:
+        files.append(path)
+
+    def mtime(f):
+        try:
+            return os.path.getmtime(f)
+        except OSError:
+            return 0
+
+    reply = None
+    for f in sorted(files, key=mtime, reverse=True):
+        for entry in tail_entries(f):
+            p = entry.get("payload") if isinstance(entry, dict) and entry.get("type") == "event_msg" else None
+            item = p.get("item") if isinstance(p, dict) and p.get("type") == "item_completed" else None
+            if not isinstance(item, dict):
+                continue
+            text = "".join(c.get("text") or "" for c in item.get("content") or [] if isinstance(c, dict)).strip()
+            if item.get("type") == "AgentMessage" and text and reply is None:
+                reply = text
+            elif item.get("type") == "UserMessage" and text:
+                return " ".join(text.split())[:160], reply
+    return None, None
 
 
 DORMANT = "send a prompt to start"  # a job that isn't running, in Claude's words

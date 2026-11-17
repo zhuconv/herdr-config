@@ -1,12 +1,12 @@
 #!/bin/bash
 # Sets this Mac's Herdr up like the others: keys, the my-main layout, the mods, the theme,
-# the Claude Code hook behind the ⌃Tab cards, and the Raycast ⌘G script.
+# the Claude Code (and Codex) hook behind the ⌃Tab cards, and the Raycast ⌘G script.
 # Safe to run again to update. Anything it replaces is copied first to
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
 #
 #   ./install.sh --remote <machine>   (a machine from `hc machine ls`)
 # puts only the hook on that machine, so Claude sessions running there in Herdr
-# terminals fill their ⌃Tab cards too. It needs python3 there.
+# terminals fill their ⌃Tab cards too (and Codex ones run --no-daemon). It needs python3 there.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -15,7 +15,8 @@ if [ "${1:-}" = "--remote" ]; then
   hc file write --on "$m" .local/bin/agent-note <claude/agent-note >/dev/null
   hc exec --on "$m" -- chmod +x .local/bin/agent-note
   hc exec --on "$m" -i -- python3 - <claude/merge-hooks.py
-  echo "$m: agent-note is in place. Sessions there pick it up on their next prompt."
+  hc exec --on "$m" -i -- python3 - <claude/merge-codex-hooks.py
+  echo "$m: agent-note is in place. Claude sessions there pick it up on their next prompt, Codex ones when they start."
   exit 0
 fi
 
@@ -44,8 +45,9 @@ done
 chmod +x "$HOME/.local/bin/agent-note"
 
 # Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart and PreCompact (added once,
-# never twice).
+# never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
 python3 claude/merge-hooks.py
+python3 claude/merge-codex-hooks.py
 
 # Small C helpers. The Command Line Tools' default SDK can be newer than its compiler; then an
 # older SDK that links is used.
