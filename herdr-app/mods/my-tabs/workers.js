@@ -2,7 +2,7 @@
 // parent still runs (terminals()[].parent, named as `address` is): an agent's worker, shown
 // in a tab after a keep. Closing its tab or pane doesn't end it: it goes back under its
 // parent, still running, as Send back does (main.js closeTab, reopen.js). Closing a manager
-// asks first (ask.js), and its "Close and end workers" ends everything running under it too.
+// asks first (ask.js), and its "End all" ends everything running under it too.
 // No imports: reopen.js and the node tests use it as well.
 
 // Of `addrs`, the workers.

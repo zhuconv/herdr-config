@@ -25,7 +25,7 @@
 //
 // A worker (workers.js: its hc parent still runs) is parked the same way but never ended
 // here: it goes back under its parent, still running, and ⌘⇧W shows it again. A close the
-// dialog's "Close and end workers" made (`end`) ends everything running under its terminals
+// dialog's "End all" made (`end`) ends everything running under its terminals
 // when they end.
 import { descendants, endEach } from "./workers.js";
 
@@ -183,7 +183,7 @@ export class Reopener {
 
   // ⌘W: the focused pane when its tab has other panes, else the whole tab (the space goes
   // with its last tab). `id` names a tab ("tb…": the tab's ×) or a pane ("p…") instead.
-  // back: the workers among its terminals (main.js); end: "Close and end workers"; to: the
+  // back: the workers among its terminals (main.js); end: "End all"; to: the
   // name of the one that started the workers, for the toast.
   close(cx, id, { back = new Set(), end = false, to = null } = {}) {
     const all = this.h.panes();
@@ -371,7 +371,7 @@ export class Reopener {
       const t = list.find((x) => x.address === p.terminal);
       if (t?.state === "live" && !shown.has(p.terminal) && !t.labels?.["herdr.space"]) ends.push(p.terminal);
     }
-    // "Close and end workers": what runs under them ends first, while their parent links hold.
+    // "End all": what runs under them ends first, while their parent links hold.
     // Through hc: Herdr's terminal.kill also ends the terminal's children, even those started
     // with --outlive-parent (a manager's workers, meant to outlive it); hc's kill keeps them.
     const under = rec.end ? descendants(this.h.terminals(), ends) : [];

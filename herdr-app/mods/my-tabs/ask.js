@@ -2,8 +2,9 @@
 // children (terminals started from them with `hc run`, e.g. a manager agent's workers). It
 // lists each child under what happens to it. A click on one peeks at it over the dialog, and
 // closing the peek comes back to the dialog. When some would keep running (a manager's
-// workers), "Close and end workers" ends them with it instead. main.js opens it as this mod's
-// overlay; that copy of the view draws only askView.
+// workers), "End all" ends them with it instead. The pointer on End all or Close lights up
+// the children that button ends. main.js opens it as this mod's overlay; that copy of the
+// view draws only askView.
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, closeOverlay, openOverlay, focused } from "herdr";
@@ -24,7 +25,7 @@ const GROUPS = [
 ];
 
 // what: "tab", "pane" or "space"; name: its name; command and args: what Enter and the
-// Close button run; endCommand: what "Close and end workers" runs (main.js "close-end");
+// Close button run; endCommand: what "End all" runs (main.js "close-end");
 // when: a line on when its terminals end.
 export function askClose({ what, name, command, endCommand, args, kids, when }) {
   const groups = GROUPS.filter(([, f]) => kids.some(f)).length;
@@ -72,7 +73,8 @@ function status(t, k) {
   return null;
 }
 
-function row(t, k, view) {
+// lit: the button under the pointer ends this child.
+function row(t, k, view, lit) {
   const st = status(t, k);
   return h_flex()
     .id(`kid-${k.address}`)
@@ -83,7 +85,8 @@ function row(t, k, view) {
     .items_center()
     .rounded(8)
     .border_1()
-    .border_color(t.input)
+    .border_color(lit ? t.blocked + "80" : t.input)
+    .when(lit, (el) => el.bg(t.blocked + "26"))
     .cursor_pointer()
     .hover((s) => s.bg(t.hover))
     .on_click(() => peek(view, k.address))
@@ -103,7 +106,19 @@ export function askView(t, p, all, view, cx) {
   const live = new Map(all.map((k) => [k.address, k]));
   const kids = a.kids.map((x) => live.get(x)).filter((k) => k?.state === "live");
   const stay = kids.filter(GROUPS[0][1]);
-  const close = () => closeOverlay(p.overlay);
+  // The button under the pointer ("end" or "yes") and the children it ends: End all, every
+  // one; Close, those that end with their parent.
+  const hov = view.askHover?.overlay === p.overlay ? view.askHover.on : null;
+  const ends = (k) => hov === "end" || (hov === "yes" && GROUPS[1][1](k));
+  const hover = (on) => (hovered, cx) => {
+    if (hovered) view.askHover = { overlay: p.overlay, on };
+    else if (view.askHover?.on === on) view.askHover = null;
+    cx.notify();
+  };
+  const close = () => {
+    view.askHover = null;
+    closeOverlay(p.overlay);
+  };
   const yes = () => {
     close();
     run(a.command, a.args);
@@ -140,10 +155,11 @@ export function askView(t, p, all, view, cx) {
       .children(GROUPS.map(([label, f]) => [label, kids.filter(f)]).filter(([, list]) => list.length)
         .map(([label, list]) => v_flex().gap(6).flex_none()
           .child(div().text_size(11).font_medium().text_color(t.dim).child(label))
-          .children(list.map((k) => row(t, k, view))))))
+          .children(list.map((k) => row(t, k, view, ends(k)))))))
     .child(h_flex().justify_end().gap(8).text_size(12)
       .child(button("no", "Cancel", t.raised, t.foreground, t.input, close))
-      .when(Boolean(a.end) && stay.length > 0, (el) => el.child(button("end",
-        `Close and end ${stay.length} worker${stay.length === 1 ? "" : "s"}`, t.raised, t.blocked, t.input, end)))
-      .child(button("yes", `Close ${a.what}`, t.solid, t.solid_foreground, t.solid, yes)));
+      .when(Boolean(a.end) && stay.length > 0, (el) => el.child(button("end", "End all",
+        hov === "end" ? t.blocked + "26" : t.raised, t.blocked, hov === "end" ? t.blocked + "80" : t.input, end)
+        .on_hover(hover("end"))))
+      .child(button("yes", `Close ${a.what}`, t.solid, t.solid_foreground, t.solid, yes).on_hover(hover("yes"))));
 }

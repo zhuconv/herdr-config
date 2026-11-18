@@ -116,7 +116,7 @@ export default class Tabs extends View {
           // "close" (⌘W), "close <tab or pane>" (a tab's ×, the tab menu), "close kill <pane>" and
           // "close space <id>" (mods/my-menu): each asks first when the terminals it ends have
           // running children (ask.js). "close-confirmed …" is that dialog's yes, in the same forms;
-          // "close-end …" its "Close and end workers": the children that would keep running end too.
+          // "close-end …" its "End all": the children that would keep running end too.
           if (c === "close" || c.startsWith("close ")) {
             const arg = c.slice(6).trim();
             if (arg.startsWith("kill ")) this.killPane(arg.slice(5).trim());
@@ -417,7 +417,7 @@ export default class Tabs extends View {
   // When that takes the shown tab away, the bar's neighbour (projects.js replacement) is shown
   // first, so Herdr never shows the next tab of the space (maybe another project's) in between.
   // id: a tab ("tb…") or a pane ("p…"); none: the focused pane, or its tab if it's alone there.
-  // confirmed: the dialog below already asked; end: it said "Close and end workers".
+  // confirmed: the dialog below already asked; end: it said "End all".
   closeTab(cx, id, confirmed = false, end = false) {
     // On a machine that can't be reached nothing there can close (and no reopen record should
     // be kept for it): ⌘W gives you a local terminal instead; a tab's × or Close says why.
@@ -502,7 +502,7 @@ export default class Tabs extends View {
   // Close pane, once the dialog said yes: the pane goes as with pane.close, but its terminal ends
   // through hc. Herdr's pane.close and terminal.kill end the terminal's children too, even those
   // started with --outlive-parent (a manager's workers); hc's kill keeps them, as the dialog says.
-  // end ("Close and end workers"): everything running under it ends first, while its parent
+  // end ("End all"): everything running under it ends first, while its parent
   // links still hold.
   async endPane(cx, id, end = false) {
     const term = panes().find((x) => x.pane === id)?.terminal;
