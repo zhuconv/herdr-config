@@ -138,15 +138,17 @@ export function askView(t, p, all, view, cx) {
     close();
     run(a.end, a.args);
   };
-  // Each button's [background, text, border], then the same under the pointer: Cancel and
-  // Close lift, End all turns red.
+  // Each button's [background, text, border], then the same under the pointer. At rest all
+  // three are quiet, Close set apart only by a lighter outline (Enter presses it). Under the
+  // pointer Cancel lifts, Close fills in as the primary button, End all turns red.
   const button = (id, label, [bg, fg, border], [hbg, hfg, hborder], onClick) => {
     const on = hov === id;
     return h_flex().id(id).h(32).px(14).items_center().rounded(8).border_1()
       .border_color(on ? hborder : border).bg(on ? hbg : bg).text_color(on ? hfg : fg)
       .cursor_pointer().on_hover(hover(id)).on_click(onClick).child(label);
   };
-  const raisedUp = lift(t, t.raised, 0.1), solidUp = lift(t, t.solid, 1);
+  const raisedUp = lift(t, t.raised, 0.1);
+  const outline = /^#[0-9a-f]{6}$/i.test(t.foreground ?? "") ? t.foreground + "4d" : t.input;
   return v_flex()
     .id("close-ask")
     .track_focus(view.handle)
@@ -178,5 +180,5 @@ export function askView(t, p, all, view, cx) {
       .child(button("no", "Cancel", [t.raised, t.foreground, t.input], [raisedUp, t.foreground, t.input], close))
       .when(Boolean(a.end) && stay.length > 0, (el) => el.child(button("end", "End all",
         [t.raised, t.blocked, t.input], [t.blocked, "#ffffff", t.blocked], end)))
-      .child(button("yes", `Close ${a.what}`, [t.solid, t.solid_foreground, t.solid], [solidUp, t.solid_foreground, solidUp], yes)));
+      .child(button("yes", `Close ${a.what}`, [t.raised, t.foreground, outline], [t.solid, t.solid_foreground, t.solid], yes)));
 }
