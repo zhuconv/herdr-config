@@ -73,6 +73,17 @@ function ringColor(t) {
 // A color at some opacity ("1f" = 12%), when it's a plain #rrggbb; else the fallback.
 const faint = (c, alpha, fallback) => (/^#[0-9a-f]{6}$/i.test(c ?? "") ? c + alpha : fallback);
 
+// A button's hover color: c moved toward white on a dark popover (toward black on a light one)
+// by w, 0 to 1. Herdr's own dialogs fade the button to 88% instead, which greys it out as if
+// it were disabled. c as it is when it isn't a plain #rrggbb.
+function lift(t, c, w) {
+  const rgb = (s) => (/^#[0-9a-f]{6}$/i.test(s ?? "") ? [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16)) : null);
+  const bg = rgb(t.popover), from = rgb(c);
+  if (!bg || !from) return c;
+  const to = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2] < 128 ? 255 : 0;
+  return "#" + from.map((v) => Math.round(v + (to - v) * w).toString(16).padStart(2, "0")).join("");
+}
+
 function programIcon(p, size, color) {
   if (!p?.icon) return null;
   return p.tint ? svg(p.icon).size(size).flex_none().text_color(color) : image(p.icon).w(size).h(size).flex_none();
@@ -985,7 +996,7 @@ class Popup {
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
-      .hover((s) => s.opacity(0.88)).on_click(action).child(text);
+      .hover((s) => (primary ? s.bg(lift(t, t.solid, 1)).border_color(lift(t, t.solid, 1)) : s.bg(lift(t, t.raised, 0.1)))).on_click(action).child(text);
     const hint = renaming ? "Its directories and icon stay." : p.dir ? `Moves ${where(p.dir)} into it.` : "Then drag pills onto it, or right-click one.";
     return v_flex().id("new-project").track_focus(this.handle).on_key_down(esc).w_full().min_h(0).p(18).bg(t.popover).text_color(t.foreground)
       .child(h_flex().items_center().child(div().flex_1().text_size(15).font_semibold().child(renaming ? "Rename project" : "New project"))
@@ -1014,7 +1025,7 @@ class Popup {
     const button = (id, text, primary, action) => h_flex().id(id).h(32).px(14).items_center().rounded(8)
       .border_1().border_color(primary ? t.solid : t.input).bg(primary ? t.solid : t.raised)
       .text_color(primary ? t.solid_foreground : t.foreground).text_size(12.5).font_medium().cursor_pointer()
-      .hover((s) => s.opacity(0.88)).on_click(action).child(text);
+      .hover((s) => (primary ? s.bg(lift(t, t.solid, 1)).border_color(lift(t, t.solid, 1)) : s.bg(lift(t, t.raised, 0.1)))).on_click(action).child(text);
     const label = (text) => div().pt(14).pb(7).text_size(11.5).text_color(t.dim).child(text);
     const hint = agentsRunOn(this.on) ? `Made if it isn't there, added to ${p.project}, and Claude starts in it.`
       : `Made if it isn't there and added to ${p.project}. A terminal opens in it: Claude can't run on ${this.on}'s login node.`;

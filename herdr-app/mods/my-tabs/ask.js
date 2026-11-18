@@ -73,6 +73,17 @@ function status(t, k) {
   return null;
 }
 
+// A button's hover color: c moved toward white on a dark popover (toward black on a light one)
+// by w, 0 to 1. Herdr's own dialogs fade the button to 88% instead, which greys it out as if
+// it were disabled. c as it is when it isn't a plain #rrggbb.
+function lift(t, c, w) {
+  const rgb = (s) => (/^#[0-9a-f]{6}$/i.test(s ?? "") ? [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16)) : null);
+  const bg = rgb(t.popover), from = rgb(c);
+  if (!bg || !from) return c;
+  const to = 0.299 * bg[0] + 0.587 * bg[1] + 0.114 * bg[2] < 128 ? 255 : 0;
+  return "#" + from.map((v) => Math.round(v + (to - v) * w).toString(16).padStart(2, "0")).join("");
+}
+
 // lit: the button under the pointer ends this child.
 function row(t, k, view, lit) {
   const st = status(t, k);
@@ -106,8 +117,8 @@ export function askView(t, p, all, view, cx) {
   const live = new Map(all.map((k) => [k.address, k]));
   const kids = a.kids.map((x) => live.get(x)).filter((k) => k?.state === "live");
   const stay = kids.filter(GROUPS[0][1]);
-  // The button under the pointer ("end" or "yes") and the children it ends: End all, every
-  // one; Close, those that end with their parent.
+  // The button under the pointer ("no", "end" or "yes") and the children it ends: End all,
+  // every one; Close, those that end with their parent.
   const hov = view.askHover?.overlay === p.overlay ? view.askHover.on : null;
   const ends = (k) => hov === "end" || (hov === "yes" && GROUPS[1][1](k));
   const hover = (on) => (hovered, cx) => {
@@ -127,8 +138,15 @@ export function askView(t, p, all, view, cx) {
     close();
     run(a.end, a.args);
   };
-  const button = (id, label, bg, fg, border, onClick) =>
-    h_flex().id(id).h(32).px(14).items_center().rounded(8).border_1().border_color(border).bg(bg).text_color(fg).cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick).child(label);
+  // Each button's [background, text, border], then the same under the pointer: Cancel and
+  // Close lift, End all turns red.
+  const button = (id, label, [bg, fg, border], [hbg, hfg, hborder], onClick) => {
+    const on = hov === id;
+    return h_flex().id(id).h(32).px(14).items_center().rounded(8).border_1()
+      .border_color(on ? hborder : border).bg(on ? hbg : bg).text_color(on ? hfg : fg)
+      .cursor_pointer().on_hover(hover(id)).on_click(onClick).child(label);
+  };
+  const raisedUp = lift(t, t.raised, 0.1), solidUp = lift(t, t.solid, 1);
   return v_flex()
     .id("close-ask")
     .track_focus(view.handle)
@@ -157,9 +175,8 @@ export function askView(t, p, all, view, cx) {
           .child(div().text_size(11).font_medium().text_color(t.dim).child(label))
           .children(list.map((k) => row(t, k, view, ends(k)))))))
     .child(h_flex().justify_end().gap(8).text_size(12)
-      .child(button("no", "Cancel", t.raised, t.foreground, t.input, close))
+      .child(button("no", "Cancel", [t.raised, t.foreground, t.input], [raisedUp, t.foreground, t.input], close))
       .when(Boolean(a.end) && stay.length > 0, (el) => el.child(button("end", "End all",
-        hov === "end" ? t.blocked + "26" : t.raised, t.blocked, hov === "end" ? t.blocked + "80" : t.input, end)
-        .on_hover(hover("end"))))
-      .child(button("yes", `Close ${a.what}`, t.solid, t.solid_foreground, t.solid, yes).on_hover(hover("yes"))));
+        [t.raised, t.blocked, t.input], [t.blocked, "#ffffff", t.blocked], end)))
+      .child(button("yes", `Close ${a.what}`, [t.solid, t.solid_foreground, t.solid], [solidUp, t.solid_foreground, solidUp], yes)));
 }
