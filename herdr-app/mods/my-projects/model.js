@@ -320,12 +320,10 @@ export function withBackground(list, { panes = [], spaces = [], terminals = [], 
 // A worker kept as a tab files with its starter: an agent's hc child (terminals()[].parent),
 // shown in a tab of its own, goes in the left panel and the bar where the terminal that started
 // it is (the nearest of its ancestors that has a pane), whatever folder or machine it runs in.
-// A terminal with no hc parent counts the one in its label my-tabs.from as its parent here: hcs
-// sets it on a shell it opens on another machine, naming the terminal it was typed in.
 // Each such terminal → that ancestor's pane (panes()). A worker none of whose ancestors has a
 // pane, or one in a pane beside its starter's, isn't here: it files by its own folder.
 export function starters(terminals, panes) {
-  const parent = new Map((terminals ?? []).map((t) => [t.address, t.parent ?? t.labels?.["my-tabs.from"] ?? null]));
+  const parent = new Map((terminals ?? []).map((t) => [t.address, t.parent ?? null]));
   const paneOf = new Map();
   for (const p of panes ?? []) if (p.terminal && !paneOf.has(p.terminal)) paneOf.set(p.terminal, p);
   const out = new Map();

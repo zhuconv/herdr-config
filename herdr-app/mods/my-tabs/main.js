@@ -388,14 +388,6 @@ export default class Tabs extends View {
     const was = this.lastShown;
     // The shown tab is still there (the usual move): nothing to replace, no tabs to work out.
     if (!was || !pane || spaces().some((s) => s.tabs.some((t) => t.id === was.tab))) return true;
-    // A tab opened from another (a kept worker, a shell hcs opened) gives the view back to that
-    // one's tab when it goes with its terminal, e.g. when its shell exits (not when it's moved).
-    const all = panes();
-    if (was.home && was.home !== pane && !all.some((p) => p.terminal === was.term) && all.some((p) => p.pane === was.home)) {
-      this.lastShown = null;
-      run("pane.focus", { pane: was.home });
-      return true;
-    }
     const tabs = allTabs(), tab = tabs.find((t) => t.id === f.tab);
     if (tab && (tabProject(tab, projectState()) ?? null) !== was.project) {
       const id = replacement(was, new Set(tabs.map((t) => t.id)));
@@ -460,12 +452,9 @@ export default class Tabs extends View {
     // Only workers: when their tab is on screen, the tab of the one that started them shows next.
     const boss = closing.length && !ending.length ? starters(ts, all).get(closing[0].terminal) ?? null : null;
     const opts = { back, end, to: boss ? this.nameOf(boss.terminal) : null };
-    // So does the tab a shell was opened from (hcs, projects.js starters), as ssh ending gives
-    // you back your shell.
-    const home = boss ?? (closing.length ? starters(ts, all).get(closing[0].terminal) ?? null : null);
-    if (home && whole && tabId && tabId === f?.tab) {
+    if (boss && whole && tabId && tabId === f?.tab) {
       this.lastShown = null;
-      run("pane.focus", { pane: home.pane });
+      run("pane.focus", { pane: boss.pane });
       this.reopen.close(cx, id ?? tabId, opts);
       return;
     }
@@ -1006,9 +995,7 @@ export default class Tabs extends View {
       .on_mouse_down("right", (_e, cx) => {
         cx.stop_propagation();
         const boss = tab.starter ? this.view.flatMap((g) => g.tabs).flatMap((x) => x.listed).find((p) => p.terminal === tab.starter) : null;
-        // Only a worker goes back (an hc child): a shell hcs opened is filed by its starter too.
-        const back = tab.starter && workersOf(terminals(), [tab.listed[0]?.terminal]).size
-          ? [[`Send back to ${boss?.name || tab.starter}`, `my-tabs.sendback ${tab.listed[0].terminal}`]] : [];
+        const back = tab.starter ? [[`Send back to ${boss?.name || tab.starter}`, `my-tabs.sendback ${tab.listed[0].terminal}`]] : [];
         const split = tab.listed.length > 1 ? tab.listed.filter((p) => p.terminal).map((p) => [`Move ${p.name} to new tab`, `my-tabs.split-out ${p.terminal}`]) : [];
         const extra = [...back, ...split];
         openOverlay({ mod: "my-menu", kind: "popup", width: extra.length ? 260 : 200, props: { tab: "tab", target: { id: tab.id, space: tab.space }, extra } });
@@ -1090,12 +1077,9 @@ export default class Tabs extends View {
     // Every tab's number, folded groups' too (nthTab counts the same way).
     this.nums = new Map(groups.flatMap((g) => g.tabs).map((x, i) => [x.id, i + 1]));
     const active = focused()?.tab ?? null;
-    // What the bar shows, for track(): if this tab goes away, the pane it was opened from (home)
-    // follows, else its neighbour here.
+    // What the bar shows, for track(): if this tab goes away, its neighbour here follows.
     const ids = groups.flatMap((g) => g.tabs).map((x) => x.id);
-    const me = active ? groups.flatMap((g) => g.tabs).find((x) => x.id === active) : null;
-    const home = me?.starter ? panes().find((p) => p.terminal === me.starter)?.pane ?? null : null;
-    this.lastShown = active && ids.includes(active) ? { tab: active, project, list: ids, home, term: me?.listed[0]?.terminal ?? null } : null;
+    this.lastShown = active && ids.includes(active) ? { tab: active, project, list: ids } : null;
     const flat = groups.filter((g) => g.tabs.length === 1 || !this.folded.has(g.key)).flatMap((g) => g.tabs);
     const to = this.drag?.moved ? this.target() : null;
     const root = layout(), sidebar = find(root, "sidebar"), w = window();
