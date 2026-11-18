@@ -1,8 +1,9 @@
 // my-tabs: before a pane, tab or space closes, a dialog when its terminals have running
 // children (terminals started from them with `hc run`, e.g. a manager agent's workers). It
 // lists each child under what happens to it. A click on one peeks at it over the dialog, and
-// closing the peek comes back to the dialog. main.js opens it as this mod's overlay; that copy
-// of the view draws only askView.
+// closing the peek comes back to the dialog. When some would keep running (a manager's
+// workers), "Close and end workers" ends them with it instead. main.js opens it as this mod's
+// overlay; that copy of the view draws only askView.
 import { div, svg, image } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { run, closeOverlay, openOverlay, focused } from "herdr";
@@ -23,13 +24,14 @@ const GROUPS = [
 ];
 
 // what: "tab", "pane" or "space"; name: its name; command and args: what Enter and the
-// Close button run; when: a line on when its terminals end.
-export function askClose({ what, name, command, args, kids, when }) {
+// Close button run; endCommand: what "Close and end workers" runs (main.js "close-end");
+// when: a line on when its terminals end.
+export function askClose({ what, name, command, endCommand, args, kids, when }) {
   const groups = GROUPS.filter(([, f]) => kids.some(f)).length;
   const height = Math.min(480, 112 + (when ? 22 : 0) + groups * 34 + kids.length * 38);
   // modal: a click beside it, e.g. one on the peek above it, leaves it open.
   openOverlay({ mod: "my-tabs", kind: "dialog", modal: true, width: 480, height, props: {
-    closeAsk: { what, name, command, args: args ?? {}, kids: kids.map((k) => k.address), when },
+    closeAsk: { what, name, command, end: endCommand ?? null, args: args ?? {}, kids: kids.map((k) => k.address), when },
   } });
 }
 
@@ -93,16 +95,22 @@ function row(t, k, view) {
 }
 
 // The dialog. p: props() of the overlay; all: terminals(); view: see peek(); cx: render's.
-// Enter closes, Esc keeps everything, as Herdr's confirm dialog.
+// Enter closes, Esc keeps everything, as Herdr's confirm dialog; ending the workers too takes
+// a click.
 export function askView(t, p, all, view, cx) {
   refocus(view, cx);
   const a = p.closeAsk;
   const live = new Map(all.map((k) => [k.address, k]));
   const kids = a.kids.map((x) => live.get(x)).filter((k) => k?.state === "live");
+  const stay = kids.filter(GROUPS[0][1]);
   const close = () => closeOverlay(p.overlay);
   const yes = () => {
     close();
     run(a.command, a.args);
+  };
+  const end = () => {
+    close();
+    run(a.end, a.args);
   };
   const button = (id, label, bg, fg, border, onClick) =>
     h_flex().id(id).h(32).px(14).items_center().rounded(8).border_1().border_color(border).bg(bg).text_color(fg).cursor_pointer().hover((s) => s.opacity(0.88)).on_click(onClick).child(label);
@@ -135,5 +143,7 @@ export function askView(t, p, all, view, cx) {
           .children(list.map((k) => row(t, k, view))))))
     .child(h_flex().justify_end().gap(8).text_size(12)
       .child(button("no", "Cancel", t.raised, t.foreground, t.input, close))
+      .when(Boolean(a.end) && stay.length > 0, (el) => el.child(button("end",
+        `Close and end ${stay.length} worker${stay.length === 1 ? "" : "s"}`, t.raised, t.blocked, t.input, end)))
       .child(button("yes", `Close ${a.what}`, t.solid, t.solid_foreground, t.solid, yes)));
 }

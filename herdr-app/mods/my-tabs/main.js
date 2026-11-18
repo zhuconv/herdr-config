@@ -6,6 +6,7 @@ import { spaces, panes, run, openOverlay, theme, window, shared, layout, setting
 import { readdir } from "fs/promises";
 import { Reopener } from "./reopen.js";
 import { childrenOf, askClose, askView } from "./ask.js";
+import { workersOf, descendants, endEach } from "./workers.js";
 import { pickWaiting } from "./waiting.js";
 import { Jobs, attachedTo, fromRecord, fromNote, matches } from "./jobs.js";
 import { Recent } from "./recent.js";
@@ -114,18 +115,20 @@ export default class Tabs extends View {
         try {
           // "close" (⌘W), "close <tab or pane>" (a tab's ×, the tab menu), "close kill <pane>" and
           // "close space <id>" (mods/my-menu): each asks first when the terminals it ends have
-          // running children (ask.js). "close-confirmed …" is that dialog's yes, in the same forms.
+          // running children (ask.js). "close-confirmed …" is that dialog's yes, in the same forms;
+          // "close-end …" its "Close and end workers": the children that would keep running end too.
           if (c === "close" || c.startsWith("close ")) {
             const arg = c.slice(6).trim();
             if (arg.startsWith("kill ")) this.killPane(arg.slice(5).trim());
             else if (arg.startsWith("space ")) this.closeSpace(arg.slice(6).trim());
             else this.closeTab(cx, arg || null);
           }
-          else if (c.startsWith("close-confirmed ")) {
-            const arg = c.slice(16).trim();
-            if (arg.startsWith("kill ")) await this.endPane(cx, arg.slice(5).trim());
-            else if (arg.startsWith("space ")) await this.endSpace(cx, arg.slice(6).trim());
-            else this.closeTab(cx, arg, true);
+          else if (c.startsWith("close-confirmed ") || c.startsWith("close-end ")) {
+            const end = c.startsWith("close-end ");
+            const arg = c.slice(end ? 10 : 16).trim();
+            if (arg.startsWith("kill ")) await this.endPane(cx, arg.slice(5).trim(), end);
+            else if (arg.startsWith("space ")) await this.endSpace(cx, arg.slice(6).trim(), end);
+            else this.closeTab(cx, arg, true, end);
           }
           else if (c === "new-tab") this.newTab();
           else if (c === "reopen") await this.reopen.reopen(cx);
@@ -414,8 +417,8 @@ export default class Tabs extends View {
   // When that takes the shown tab away, the bar's neighbour (projects.js replacement) is shown
   // first, so Herdr never shows the next tab of the space (maybe another project's) in between.
   // id: a tab ("tb…") or a pane ("p…"); none: the focused pane, or its tab if it's alone there.
-  // confirmed: the dialog below already asked.
-  closeTab(cx, id, confirmed = false) {
+  // confirmed: the dialog below already asked; end: it said "Close and end workers".
+  closeTab(cx, id, confirmed = false, end = false) {
     // On a machine that can't be reached nothing there can close (and no reopen record should
     // be kept for it): ⌘W gives you a local terminal instead; a tab's × or Close says why.
     const at = id ? machineOf(id) : this.shownMachine();
@@ -428,16 +431,31 @@ export default class Tabs extends View {
     const tabId = id ? (pane ? all.find((p) => p.pane === id)?.tab : id) : f?.tab;
     const mine = all.filter((p) => p.tab === tabId);
     const whole = (id && !pane) || mine.length <= 1 || (!id && !mine.some((p) => p.pane === f?.pane));
-    // Parked terminals end after their grace (reopen.js). When the ones this parks have running
-    // children, e.g. a manager agent's workers, ask first; the dialog sends "close-confirmed".
+    // A worker (workers.js: its hc parent still runs, e.g. an agent's worker kept as a tab) goes
+    // back under its parent, still running, as Send back does. The others are parked and end
+    // after their grace (reopen.js). When those have running children, e.g. a manager agent's
+    // workers, ask first; the dialog sends "close-confirmed" or "close-end".
     const target = whole ? tabId : (pane ? id : f?.pane);
-    const ending = (whole ? mine : mine.filter((p) => p.pane === target)).filter((p) => p.terminal);
-    const kids = confirmed ? [] : childrenOf(terminals(), ending.map((p) => p.terminal));
+    const closing = (whole ? mine : mine.filter((p) => p.pane === target)).filter((p) => p.terminal);
+    const ts = terminals();
+    const back = workersOf(ts, closing.map((p) => p.terminal));
+    const ending = closing.filter((p) => !back.has(p.terminal));
+    const kids = confirmed ? [] : childrenOf(ts, ending.map((p) => p.terminal));
     if (target && kids.length) {
       const agent = ending.some((p) => p.program?.agent || p.app);
       const name = whole ? spaces().flatMap((s) => s.tabs).find((t) => t.id === tabId)?.name : ending[0]?.title;
-      askClose({ what: whole ? "tab" : "pane", name: name || target, command: `my-tabs.close-confirmed ${target}`, kids,
+      askClose({ what: whole ? "tab" : "pane", name: name || target, command: `my-tabs.close-confirmed ${target}`,
+        endCommand: `my-tabs.close-end ${target}`, kids,
         when: `It ends in ${agent ? "10 minutes" : "a minute"}; ⌘⇧T reopens it until then.` });
+      return;
+    }
+    // Only workers: when their tab is on screen, the tab of the one that started them shows next.
+    const boss = closing.length && !ending.length ? starters(ts, all).get(closing[0].terminal) ?? null : null;
+    const opts = { back, end, to: boss ? this.nameOf(boss.terminal) : null };
+    if (boss && whole && tabId && tabId === f?.tab) {
+      this.lastShown = null;
+      run("pane.focus", { pane: boss.pane });
+      this.reopen.close(cx, id ?? tabId, opts);
       return;
     }
     const shown = this.lastShown;
@@ -447,11 +465,17 @@ export default class Tabs extends View {
       if (to) {
         this.lastShown = null;
         select(to);
-        this.reopen.close(cx, id ?? tabId);
+        this.reopen.close(cx, id ?? tabId, opts);
         return;
       }
     }
-    this.reopen.close(cx, id);
+    this.reopen.close(cx, id, opts);
+  }
+
+  // A terminal's name as the bar names it, else its hc name, else its address.
+  nameOf(terminal) {
+    const listed = (this.view ?? []).flatMap((g) => g.tabs).flatMap((x) => x.listed).find((p) => p.terminal === terminal);
+    return listed?.name || terminals().find((t) => t.address === terminal)?.name || terminal;
   }
 
   // The pane menu's Close pane (mods/my-menu): ends its terminal at once, as Herdr's pane.close
@@ -459,7 +483,8 @@ export default class Tabs extends View {
   killPane(id) {
     const p = panes().find((x) => x.pane === id);
     const kids = p?.terminal ? childrenOf(terminals(), [p.terminal]) : [];
-    if (kids.length) askClose({ what: "pane", name: p.title || p.terminal, command: `my-tabs.close-confirmed kill ${id}`, kids, when: "It ends at once." });
+    if (kids.length) askClose({ what: "pane", name: p.title || p.terminal, command: `my-tabs.close-confirmed kill ${id}`,
+      endCommand: `my-tabs.close-end kill ${id}`, kids, when: "It ends at once." });
     else run("pane.close", { pane: id });
   }
 
@@ -469,32 +494,39 @@ export default class Tabs extends View {
     const s = spaces().find((x) => x.id === id);
     const tabs = new Set((s?.tabs ?? []).map((t) => t.id));
     const kids = childrenOf(terminals(), panes().filter((p) => p.terminal && tabs.has(p.tab)).map((p) => p.terminal));
-    if (kids.length) askClose({ what: "space", name: s?.name || id, command: `my-tabs.close-confirmed space ${id}`, kids, when: "Its terminals end at once." });
+    if (kids.length) askClose({ what: "space", name: s?.name || id, command: `my-tabs.close-confirmed space ${id}`,
+      endCommand: `my-tabs.close-end space ${id}`, kids, when: "Its terminals end at once." });
     else run("space.close", { id });
   }
 
   // Close pane, once the dialog said yes: the pane goes as with pane.close, but its terminal ends
   // through hc. Herdr's pane.close and terminal.kill end the terminal's children too, even those
   // started with --outlive-parent (a manager's workers); hc's kill keeps them, as the dialog says.
-  async endPane(cx, id) {
+  // end ("Close and end workers"): everything running under it ends first, while its parent
+  // links still hold.
+  async endPane(cx, id, end = false) {
     const term = panes().find((x) => x.pane === id)?.terminal;
     if (!term) {
       run("pane.close", { pane: id });
       return;
     }
+    const under = end ? descendants(terminals(), [term]) : [];
     run("terminal.park", { terminal: term });
     await cx.sleep(300);
+    if (under.length) await endEach(under, hc, notify);
     await hc(["kill", term]).catch(() => {});
   }
 
   // A space's Close, once the dialog said yes: its terminals are parked (the space goes with its
   // last pane; space.close takes what's left, e.g. mod panes), then end through hc, as in endPane.
-  async endSpace(cx, id) {
+  async endSpace(cx, id, end = false) {
     const tabs = new Set((spaces().find((x) => x.id === id)?.tabs ?? []).map((t) => t.id));
     const terms = panes().filter((p) => p.terminal && tabs.has(p.tab)).map((p) => p.terminal);
+    const under = end ? descendants(terminals(), terms) : [];
     for (const t of terms) run("terminal.park", { terminal: t });
     await cx.sleep(300);
     if (spaces().some((x) => x.id === id)) run("space.close", { id, confirmed: true });
+    if (under.length) await endEach(under, hc, notify);
     for (const t of terms) await hc(["kill", t]).catch(() => {});
   }
 

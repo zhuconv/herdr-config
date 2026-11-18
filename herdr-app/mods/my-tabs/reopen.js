@@ -22,6 +22,12 @@
 //   and a toast names the command.
 // A mod pane (a viewer) closes at once and doesn't come back; so do terminals closed with
 // the right-click menu's Close or a pane's ×.
+//
+// A worker (workers.js: its hc parent still runs) is parked the same way but never ended
+// here: it goes back under its parent, still running, and ⌘⇧W shows it again. A close the
+// dialog's "Close and end workers" made (`end`) ends everything running under its terminals
+// when they end.
+import { descendants, endEach } from "./workers.js";
 
 const AGENT_GRACE = 10 * 60 * 1000;
 const OTHER_GRACE = 60 * 1000;
@@ -177,7 +183,9 @@ export class Reopener {
 
   // ⌘W: the focused pane when its tab has other panes, else the whole tab (the space goes
   // with its last tab). `id` names a tab ("tb…": the tab's ×) or a pane ("p…") instead.
-  close(cx, id) {
+  // back: the workers among its terminals (main.js); end: "Close and end workers"; to: the
+  // name of the one that started the workers, for the toast.
+  close(cx, id, { back = new Set(), end = false, to = null } = {}) {
     const all = this.h.panes();
     let pane = null, tabId = null;
     if (id && local(id).startsWith("p")) {
@@ -206,22 +214,27 @@ export class Reopener {
       this.h.run("tab.close", { id: tab.id });
       return;
     }
-    const agent = terms.some((p) => p.program?.agent || p.app);
+    const isAgent = (p) => Boolean(p.program?.agent || p.app);
+    const ending = terms.filter((p) => !back.has(p.terminal));
+    const agent = ending.some(isAgent);
     const now = Date.now();
     const rec = {
       kind: pane ? "pane" : "tab",
-      at: now, until: now + (agent ? AGENT_GRACE : OTHER_GRACE), agent,
+      at: now, until: now + (agent ? AGENT_GRACE : OTHER_GRACE), agent, end: Boolean(end),
       machine: space.machine ?? null,
       space: { id: space.id, name: space.name, named: space.named, index: space.index },
       tab: { id: tab.id, name: tab.name, named: tab.named, index: tab.index },
-      panes: terms.map((p) => ({ terminal: p.terminal, cwd: p.cwd ?? null, title: p.title ?? "", agent: Boolean(p.program?.agent || p.app), focused: Boolean(p.focused) })),
+      panes: terms.map((p) => ({ terminal: p.terminal, cwd: p.cwd ?? null, title: p.title ?? "", agent: isAgent(p), focused: Boolean(p.focused), back: back.has(p.terminal) })),
       info: {},
     };
+    const n = end ? descendants(this.h.terminals(), ending.map((p) => p.terminal)).length : 0;
     for (const p of terms) this.h.run("terminal.park", { terminal: p.terminal });
     this.closed.push(rec);
     this.prune();
     this.save();
-    if (agent) this.h.notify({ title: `Closed “${title(rec)}”`, body: "⌘⇧W or ⌘⇧T reopens it. Its agent keeps running for 10 minutes.", timeout: 4000 });
+    if (!ending.length) this.h.notify({ title: to ? `Sent “${title(rec)}” back to ${to}` : `“${title(rec)}” keeps running`, body: "⌘⇧W or ⌘⇧T shows it again.", timeout: 4000 });
+    else if (n) this.h.notify({ title: `Closed “${title(rec)}”`, body: `⌘⇧W or ⌘⇧T reopens it. It and its ${n === 1 ? "worker" : `${n} workers`} end in ${agent ? "10 minutes" : "a minute"}.`, timeout: 5000 });
+    else if (agent) this.h.notify({ title: `Closed “${title(rec)}”`, body: "⌘⇧W or ⌘⇧T reopens it. Its agent keeps running for 10 minutes.", timeout: 4000 });
     cx.spawn(async (cx) => this.settle(cx, rec, !pane && inTab.length > terms.length));
   }
 
@@ -352,12 +365,20 @@ export class Reopener {
     const list = this.h.terminals().filter((t) => machineOf(t.address) === rec.machine);
     if (!this.ready(rec.machine) || !list.length) return false;
     const shown = new Set(this.h.panes().map((p) => p.terminal).filter(Boolean));
+    const ends = [];
     for (const p of rec.panes) {
+      if (p.back) continue; // a worker: it runs on under its parent
       const t = list.find((x) => x.address === p.terminal);
-      // Through hc: Herdr's terminal.kill also ends the terminal's children, even those started
-      // with --outlive-parent (a manager's workers, meant to outlive it); hc's kill keeps them.
-      if (t?.state === "live" && !shown.has(p.terminal) && !t.labels?.["herdr.space"]) this.h.hc(["kill", p.terminal]).catch(() => {});
+      if (t?.state === "live" && !shown.has(p.terminal) && !t.labels?.["herdr.space"]) ends.push(p.terminal);
     }
+    // "Close and end workers": what runs under them ends first, while their parent links hold.
+    // Through hc: Herdr's terminal.kill also ends the terminal's children, even those started
+    // with --outlive-parent (a manager's workers, meant to outlive it); hc's kill keeps them.
+    const under = rec.end ? descendants(this.h.terminals(), ends) : [];
+    (async () => {
+      if (under.length) await endEach(under, this.h.hc, this.h.notify);
+      for (const a of ends) this.h.hc(["kill", a]).catch(() => {});
+    })().catch(() => {});
     rec.expired = true;
     return true;
   }
@@ -370,7 +391,7 @@ export class Reopener {
     let changed = false;
     for (const rec of this.closed) {
       if (rec.expired || now < rec.until) continue;
-      if (f && rec.panes.some((p) => p.terminal === f.terminal || p.terminal === f.shown)) {
+      if (f && rec.panes.some((p) => !p.back && (p.terminal === f.terminal || p.terminal === f.shown))) {
         rec.until = now + (rec.agent ? AGENT_GRACE : OTHER_GRACE);
         changed = true;
         continue;
