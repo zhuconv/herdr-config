@@ -3,7 +3,8 @@
 // the terminal itself. It stands in for Herdr's own terminal.peek, whose keep put the worker in
 // the shown space, which Herdr refuses for another machine's terminal (the keep-worker design,
 // 2026-11-17): my-peek's keep is the Agents list's, my-tabs.keep. Opened by the "peek <terminal>"
-// command (mods/my-agents) and the close dialog (ask.js).
+// command (mods/my-agents) and the close dialog (ask.js). Esc goes to the terminal; its ✕, a
+// click beside it and ⌘W (main.js closeTab) close it.
 import { openOverlay } from "herdr";
 
 export function openPeek(terminal) {

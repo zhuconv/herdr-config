@@ -419,6 +419,14 @@ export default class Tabs extends View {
   // id: a tab ("tb…") or a pane ("p…"); none: the focused pane, or its tab if it's alone there.
   // confirmed: the dialog below already asked; end: it said "End all".
   closeTab(cx, id, confirmed = false, end = false) {
+    // ⌘W in a peek (peek.js, or Herdr's terminal.peek) closes the peek, the top dialog, and
+    // leaves the tab under it: the peek's terminal has the keyboard, which focused() reports
+    // with no pane (my-main has no terminal blocks of its own).
+    const f0 = id ? null : focused();
+    if (f0 && !f0.pane && f0.terminal) {
+      run("overlay.close", {});
+      return;
+    }
     // On a machine that can't be reached nothing there can close (and no reopen record should
     // be kept for it): ⌘W gives you a local terminal instead; a tab's × or Close says why.
     const at = id ? machineOf(id) : this.shownMachine();
