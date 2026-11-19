@@ -1,15 +1,16 @@
 #!/bin/bash
 # Sets this Mac's Herdr up like the others: keys, the my-main layout, the mods, the theme,
 # the Claude Code (and Codex) hook behind the ⌃Tab cards, the hc-workers and hc-find skills (for
-# Claude Code and Codex), and the Raycast ⌘G script.
+# Claude Code and Codex), Claude Code's short command names (/ren, /u, /m, /st), and the Raycast
+# ⌘G script.
 # Safe to run again to update. Anything it replaces is copied first to
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
 #
 #   ./install.sh --remote <machine>   (a machine from `hc machine ls`)
 # puts the hook on that machine, so Claude and Codex sessions running there in Herdr terminals
 # fill their ⌃Tab cards too (codex there runs --no-daemon in them, and Codex is asked to trust the
-# hook), and the hc-workers and hc-find skills, so an agent there can be a manager and find a
-# session by its name. It needs python3 there.
+# hook), the hc-workers and hc-find skills, so an agent there can be a manager and find a
+# session by its name, and the short command names. It needs python3 there.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -58,7 +59,12 @@ if [ "${1:-}" = "--remote" ]; then
       if [ -L "$d" ] || [ ! -e "$d" ]; then ln -sfn "../../.agents/skills/$1" "$d"
       else echo "$d is a folder, so Claude Code keeps that copy" >&2; fi' sh "$s"
   done
-  echo "$m: agent-note, the codex function and the hc-workers and hc-find skills are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
+  # Claude Code's short command names: the mod in ~/.claude/mods, loaded by new sessions.
+  (cd claude-mods && find short-names -type f ! -name .DS_Store ! -name tsconfig.json ! -path '*/.claude-plugin/types/*') | while read -r f; do
+    hc file write --on "$m" ".claude/mods/$f" <"claude-mods/$f" >/dev/null
+  done
+  hc exec --on "$m" -i -- python3 - <claude-mods/add-to-claude.py
+  echo "$m: agent-note, the codex function, the hc-workers and hc-find skills and the short command names are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
   exit 0
 fi
 
@@ -78,7 +84,7 @@ keep() { # keep <live path>: copy it into the backup before it changes
 
 for item in "${ITEMS[@]}"; do
   src=${item%%|*} dst=${item#*|}
-  if [ -e "${dst%/}" ] && ! diff -rq -x gpui-kit.d.ts -x jsconfig.json -x .DS_Store "${src%/}" "${dst%/}" >/dev/null 2>&1; then
+  if [ -e "${dst%/}" ] && ! diff -rq -x gpui-kit.d.ts -x jsconfig.json -x .DS_Store -x tsconfig.json -x types "${src%/}" "${dst%/}" >/dev/null 2>&1; then
     keep "${dst%/}"
   fi
   mkdir -p "$(dirname "${dst%/}")"
@@ -102,6 +108,9 @@ link_skill hc-find
 # never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
 python3 agent-note-hook/add-to-claude.py
 python3 agent-note-hook/add-to-codex.py
+# Claude Code's short command names (claude-mods/short-names, put in ~/.claude/mods by paths.sh):
+# every new session loads the mod.
+python3 claude-mods/add-to-claude.py
 # Codex in Herdr's terminals runs --no-daemon (see RC_LINE above), and Codex is asked whether it
 # trusts the hooks, which are then trusted with its own hashes if not.
 sh -c "$ADD_RC" sh "$RC_LINE"

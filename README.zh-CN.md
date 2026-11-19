@@ -23,6 +23,7 @@
 - **在别的机器上开 worker。** 装了 `hc-workers` 这个 skill，你对话的那个 agent（manager，Claude 或 Codex 都行）可以在你的各台机器上开 Claude 或 Codex 会话，替它们处理确认提示，把它们的汇报转告给你。它们在 Agents 列表里挂在 manager 下面，你也可以直接打开任何一个，自己指挥。
 - **把 worker 留成 tab。** 鼠标移到 Agents 列表里 worker 那一行，点它的 keep 按钮（或者右键 → Keep as tab，或者在它的 peek 里点 keep）：它变成它自己那台机器上的一个 tab，视图跳过去。这个 tab 跟着启动它的 agent 走，不管它在哪个目录、哪台机器上跑：归到那个 agent 的 project 和胶囊里，在顶部栏里紧跟在它的 tab 后面。它那一行、它的窗格标题栏和左栏里的条目都标出它在哪台机器上。Send back（它的 tab、窗格和那一行的右键菜单里都有）把它送回启动者下面，继续运行。关掉它的 tab（⌘W 或 ×）也一样：关 tab 不会结束 worker，⌘⇧T 能再把它显示出来。
 - **按名字找会话。** 装了 `hc-find` 这个 skill，agent 能按你平时叫的名字，找到你的另一个 Claude 或 Codex 会话（在它的 hc 连得到的任何机器上），并读它：现在的屏幕，或者最近几轮。要从连得到那台机器的地方问：Mac 全都连得到。
+- **Claude 命令的短名。** `/ren <名字>` 就是 `/rename <名字>`，`/u` 是 `/usage`，`/m` 是 `/model`，`/st` 是 `/status`。短名后面打个空格，输入框里就换成完整的命令，回车就和打全名一样，后面的参数照带。短名后面直接回车也会跑对应的命令，只是 Claude 正在回答时，要等这一轮答完。Claude Code 自己没有给内置命令起别名的设置（[#94614](https://github.com/anthropics/claude-code/issues/94614) 等请求都被关掉了），所以这是一个 Claude Code mod，每个新会话都会加载。短名是 `claude-mods/short-names/hooks/register.ts` 开头的一张表。
 
 ### 快捷键
 
@@ -56,7 +57,7 @@ gh repo clone zhuconv/herdr-config ~/herdr-config && ~/herdr-config/install.sh
 
 ## 远程机器
 
-在远程机器的 Herdr 终端里跑的 Claude 会话，也能填 ⌃Tab 卡片、显示工作中/空闲，前提是那台机器装了 hook（那台需要有 `python3`）。同一条命令也会把 `hc-workers` skill 装过去，这样那台机器上的 agent 也能当 manager：
+在远程机器的 Herdr 终端里跑的 Claude 会话，也能填 ⌃Tab 卡片、显示工作中/空闲，前提是那台机器装了 hook（那台需要有 `python3`）。同一条命令也会把 `hc-workers` skill（这样那台机器上的 agent 也能当 manager）和 Claude 命令的短名装过去：
 
 ```sh
 ./install.sh --remote <机器名>      # 来自 hc machine ls；每台机器跑一次
@@ -99,6 +100,7 @@ git pull && ./install.sh
 | `agent-note-hook/codex.sh`、`agent-note-hook/codex-hooks-trust` | hook 在 Codex 这边的配套。`codex.sh` 是一个 `codex` shell 函数，从 `~/.bashrc` 和 `~/.zshrc` 加载（那一行由 `install.sh` 加上）：在 Herdr 的终端里启动的 Codex 会带上 `--no-daemon`（`resume`、`fork` 加在子命令后面），hook 才知道它在哪个终端。其他子命令，以及自己直接启动 codex 程序的程序，都不受影响。`codex-hooks-trust` 问装好的 Codex（`codex app-server` 的 `hooks/list`）是否信任 agent-note 的 hook，不信任就把 Codex 自己算的哈希写进 `config.toml`，这样 relay 或 manager 自动启动的 Codex 不会停在 "Hooks need review"。`install.sh` 会跑它（Vista 上在你的计算节点上跑），`codex` 函数在 codex 程序变了之后也会跑一次。 |
 | `skills/hc-workers/` | worker 用的 skill，Claude Code 和 Codex 都能用。`SKILL.md` 是 manager 的部分：怎么用 `hc run` 开 worker（打上 manager 地址的标签，好列出自己的 worker）、会收到什么（汇报和 hc 的通知）、怎么指挥。`worker.md` 是 manager 贴进每个 worker 任务里的规则。`vista.md` 讲 Slurm 集群：agent 只在计算节点上跑，汇报经 login 节点发出。`install.sh` 照 `npx skills` 的方式装：文件放在 `~/.agents/skills/hc-workers/`（Codex 从这里读 skill），再在 `~/.claude/skills/` 里放一个指向它的链接给 Claude Code（用 `npx skills add` 加这个仓库也能找到它） |
 | `skills/hc-find/` | 按名字找会话的 skill，Claude Code 和 Codex 都能用。`find.py` 一次调用拿到 hc 看得到的所有终端，按名字匹配（有人起过名的 tab、会话标题、hc 名、地址，或会话 id 的开头），再到会话所在的机器上运行自己，从 Claude Code 或 Codex 自己的记录里找到对话记录。`install.sh` 像装 hc-workers 一样装它 |
+| `claude-mods/short-names/` | Claude 命令的短名，一个 Claude Code mod。`hooks/register.ts` 里是短名表：每个短名注册成一个命令，用 `$.command.run` 跑完整的那个；在输入框里，短名后面一出现空格就换成完整命令。`claude-mods/add-to-claude.py` 把这个 mod 的目录加进 `~/.claude/settings.json` 里的 `CLAUDE_CODE_PLUGIN_DIRS`，每个新会话都会读它。Claude Code 的 mod 接口标着 early access，Claude Code 更新后这个 mod 可能要跟着改 |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常是"查找下一个" |
 | `install.sh`、`save.sh`、`paths.sh` | 安装、存回仓库，以及同步哪些文件的清单 |
 | `docs/` | 可点击模型（GitHub Pages 发布）和截图。`index.html` 是设计画布的文件换成示例名字后的版本；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |

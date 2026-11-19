@@ -1,0 +1,5 @@
+{
+  "name": "short-names",
+  "version": "0.1.0",
+  "description": "Short names for slash commands: /ren <name> runs /rename <name>, /u runs /usage, and so on"
+}

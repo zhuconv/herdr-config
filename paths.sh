@@ -1,6 +1,7 @@
 # What this repo carries: "repo path|live path" pairs, read by install.sh and save.sh.
 # A trailing slash marks a directory, synced whole except the files Herdr writes into
-# every mod folder itself (gpui-kit.d.ts, jsconfig.json).
+# every mod folder itself (gpui-kit.d.ts, jsconfig.json), and those Claude Code writes into
+# its mods' (tsconfig.json, .claude-plugin/types/).
 H="$HOME/.config/herdr-app"
 ITEMS=(
   "herdr-app/keys.json|$H/keys.json"
@@ -25,9 +26,11 @@ ITEMS=(
   "agent-note-hook/codex-hooks-trust|$HOME/.local/bin/codex-hooks-trust"
   "skills/hc-workers/|$HOME/.agents/skills/hc-workers/"
   "skills/hc-find/|$HOME/.agents/skills/hc-find/"
+  "claude-mods/short-names/|$HOME/.claude/mods/short-names/"
   "raycast/postkey.c|$HOME/.local/share/postkey/postkey.c"
 )
-SKIP=(--exclude gpui-kit.d.ts --exclude jsconfig.json --exclude .DS_Store)
+SKIP=(--exclude gpui-kit.d.ts --exclude jsconfig.json --exclude .DS_Store
+  --exclude /tsconfig.json --exclude /.claude-plugin/types/)
 
 # The Raycast script lives in whichever Raycast script folder holds it already;
 # a new Mac gets ~/Documents/Raycast/herdr.
