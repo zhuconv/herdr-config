@@ -145,6 +145,13 @@ export default class Tabs extends View {
           else if (c.startsWith("keep ")) await this.keepWorker(cx, c.slice(5).trim());
           else if (c.startsWith("sendback ")) await this.sendBack(cx, c.slice(9).trim());
           else if (c.startsWith("peek ")) openPeek(c.slice(5).trim());
+          // "kill <terminal>": the worker menu's Kill (mods/my-menu) and the peek's (mods/my-peek).
+          // "kill-confirmed" / "kill-end": the close dialog's Kill worker / Kill all.
+          else if (c.startsWith("kill ")) this.kill(c.slice(5).trim());
+          else if (c.startsWith("kill-confirmed ") || c.startsWith("kill-end ")) {
+            const end = c.startsWith("kill-end ");
+            await this.killNow(c.slice(end ? 9 : 15).trim(), end);
+          }
         } catch (err) {
           console.log("my-tabs", c, String(err?.stack ?? err));
         }
@@ -494,6 +501,27 @@ export default class Tabs extends View {
     if (kids.length) askClose({ what: "pane", name: p.title || p.terminal, command: `my-tabs.close-confirmed kill ${id}`,
       endCommand: `my-tabs.close-end kill ${id}`, kids, when: "It ends at once." });
     else run("pane.close", { pane: id });
+  }
+
+  // Kill (the worker menu, the peek): the terminal ends now, through hc, wherever it shows.
+  // Herdr then drops its pane or peek by itself. ⌘W on a worker's tab only sends it back
+  // (workers.js). When it has running children, the close dialog asks first, as Close pane does.
+  kill(addr) {
+    const all = terminals(), term = all.find((t) => t.address === addr);
+    if (term?.state !== "live") return;
+    const kids = childrenOf(all, [addr]);
+    if (kids.length) askClose({ verb: "Kill", what: workersOf(all, [addr]).size ? "worker" : "terminal",
+      name: this.nameOf(addr), command: `my-tabs.kill-confirmed ${addr}`, endCommand: `my-tabs.kill-end ${addr}`,
+      kids, when: "It ends at once." });
+    else this.killNow(addr).catch((err) => console.log("my-tabs kill", String(err?.stack ?? err)));
+  }
+
+  // end ("Kill all"): everything running under it ends first, deepest first, while its parent
+  // links still hold. A machine that can't be reached is named in a warning.
+  async killNow(addr, end = false) {
+    const all = terminals(), term = all.find((t) => t.address === addr);
+    if (term?.state !== "live") return;
+    await endEach([...(end ? descendants(all, [addr]) : []), term], hc, notify, "kill");
   }
 
   // The space menu's Close (mods/my-menu). Herdr's space.close asks on its own; when the

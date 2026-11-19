@@ -95,14 +95,16 @@ function items(p, git) {
     case "worker": {
       // A worker row in the Agents list (an agent's hc child). Kept as a tab: go there, or send it
       // back under its starter. Else: keep it as a tab on its own machine (named on the right),
-      // or peek at it. Through mods/my-tabs, as the row's own click and keep button.
+      // or peek at it. Either way Kill, in red: it ends now (asking first when it has running
+      // children). Through mods/my-tabs, as the row's own click and keep button.
       const all = terminals();
       const term = all.find((t) => t.address === tg.terminal);
       if (!term) return [];
       const boss = starterName(term, all);
+      const kill = ["Kill", `my-tabs.kill ${term.address}`];
       return panes().some((p) => p.terminal === term.address)
-        ? [["Go to tab", "pane.focus", { terminal: term.address }], ...(boss ? [[`Send back to ${boss}`, `my-tabs.sendback ${term.address}`]] : [])]
-        : [["Keep as tab", `my-tabs.keep ${term.address}`, undefined, machineOf(term.address) ?? (shared("my-projects.local") || "local")], ["Peek", `my-tabs.peek ${term.address}`]];
+        ? [["Go to tab", "pane.focus", { terminal: term.address }], ...(boss ? [[`Send back to ${boss}`, `my-tabs.sendback ${term.address}`]] : []), kill]
+        : [["Keep as tab", `my-tabs.keep ${term.address}`, undefined, machineOf(term.address) ?? (shared("my-projects.local") || "local")], ["Peek", `my-tabs.peek ${term.address}`], kill];
     }
     case "space":
       return [
@@ -128,6 +130,7 @@ function menuIcon(command) {
   if (command.startsWith("my-tabs.split-out") || command.startsWith("my-tabs.keep") || command === "pane.focus") return "mods/my-menu/pop-out.svg";
   if (command.startsWith("my-tabs.sendback")) return "mods/my-menu/undo-2.svg";
   if (command.startsWith("my-tabs.peek")) return "mods/my-menu/eye.svg";
+  if (command.startsWith("my-tabs.kill")) return "mods/my-menu/octagon-x.svg";
   const name = /\.close( |$)/.test(command) ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
   return `mods/workspace-chrome/${name}.svg`;
 }
@@ -186,7 +189,7 @@ export default class Menu extends View {
       .children(
         list.map((it, i) =>
           v_flex()
-            .when(i > 0 && (/\.close( |$)/.test(it[1]) || it[1] === "app.help" || (it[1] === "app.theme" && list[i - 1][1] !== "app.theme")
+            .when(i > 0 && (/\.(close|kill)( |$)/.test(it[1]) || it[1] === "app.help" || (it[1] === "app.theme" && list[i - 1][1] !== "app.theme")
               || (list[i - 1][1].startsWith("my-tabs.split-out") && !it[1].startsWith("my-tabs.split-out"))
               || (list[i - 1][1].startsWith("my-tabs.sendback") && !it[1].startsWith("my-tabs.sendback"))), el => el.child(div().mx(7).my(4).h(1).bg(t.border)))
             .child(h_flex()
@@ -197,11 +200,11 @@ export default class Menu extends View {
             .rounded(7)
             .items_center()
             .justify_between()
-            .text_color(t.foreground)
+            .text_color(it[1].startsWith("my-tabs.kill") ? t.blocked : t.foreground)
             .when(i === this.at, (el) => el.bg(t.selected))
             .hover((s) => s.bg(t.hover))
             .on_click((_e, cx) => this.choose(i, cx))
-            .child(svg(menuIcon(it[1])).size(14).flex_none().text_color(t.muted))
+            .child(svg(menuIcon(it[1])).size(14).flex_none().text_color(it[1].startsWith("my-tabs.kill") ? t.blocked : t.muted))
             .child(div().flex_1().child(it[0]))
             .child(div().text_size(11).text_color(t.dim).child(it[3] ?? shortcut(it[1], it[2])))),
         ),

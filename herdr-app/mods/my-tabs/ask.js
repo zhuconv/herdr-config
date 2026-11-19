@@ -24,15 +24,16 @@ const GROUPS = [
   ["End with it", (k) => k.die_with_parent === true],
 ];
 
-// what: "tab", "pane" or "space"; name: its name; command and args: what Enter and the
+// what: "tab", "pane", "space" or "worker"; name: its name; command and args: what Enter and the
 // Close button run; endCommand: what "End all" runs (main.js "close-end");
-// when: a line on when its terminals end.
-export function askClose({ what, name, command, endCommand, args, kids, when }) {
+// when: a line on when its terminals end; verb: the title's and buttons' word, "Close", or
+// "Kill" for the worker menu's and the peek's Kill (its buttons: "Kill worker", "Kill all").
+export function askClose({ what, name, command, endCommand, args, kids, when, verb = "Close" }) {
   const groups = GROUPS.filter(([, f]) => kids.some(f)).length;
   const height = Math.min(480, 112 + (when ? 22 : 0) + groups * 34 + kids.length * 38);
   // modal: a click beside it, e.g. one on the peek above it, leaves it open.
   openOverlay({ mod: "my-tabs", kind: "dialog", modal: true, width: 480, height, props: {
-    closeAsk: { what, name, command, end: endCommand ?? null, args: args ?? {}, kids: kids.map((k) => k.address), when },
+    closeAsk: { what, name, command, end: endCommand ?? null, args: args ?? {}, kids: kids.map((k) => k.address), when, verb },
   } });
 }
 
@@ -114,6 +115,7 @@ function row(t, k, view, lit) {
 export function askView(t, p, all, view, cx) {
   refocus(view, cx);
   const a = p.closeAsk;
+  const verb = a.verb ?? "Close";
   const live = new Map(all.map((k) => [k.address, k]));
   const kids = a.kids.map((x) => live.get(x)).filter((k) => k?.state === "live");
   const stay = kids.filter(GROUPS[0][1]);
@@ -168,7 +170,7 @@ export function askView(t, p, all, view, cx) {
     .text_size(13)
     .child(v_flex().gap(4)
       .child(h_flex().items_center().gap(12)
-        .child(div().flex_1().min_w(0).truncate().text_size(15).font_semibold().text_color(t.foreground).child(`Close ${a.what} “${a.name}”?`))
+        .child(div().flex_1().min_w(0).truncate().text_size(15).font_semibold().text_color(t.foreground).child(`${verb} ${a.what} “${a.name}”?`))
         .child(div().flex_none().text_size(11).text_color(t.dim).child("Esc")))
       .when(Boolean(a.when), (el) => el.child(div().text_color(t.muted).child(a.when))))
     .child(v_flex().id("close-ask-kids").flex_1().min_h(0).overflow_y_scrollbar().gap(12)
@@ -178,7 +180,7 @@ export function askView(t, p, all, view, cx) {
           .children(list.map((k) => row(t, k, view, ends(k)))))))
     .child(h_flex().justify_end().gap(8).text_size(12)
       .child(button("no", "Cancel", [t.raised, t.foreground, t.input], [raisedUp, t.foreground, t.input], close))
-      .when(Boolean(a.end) && stay.length > 0, (el) => el.child(button("end", "End all",
+      .when(Boolean(a.end) && stay.length > 0, (el) => el.child(button("end", verb === "Close" ? "End all" : `${verb} all`,
         [t.raised, t.blocked, t.input], [t.blocked, "#ffffff", t.blocked], end)))
-      .child(button("yes", `Close ${a.what}`, [t.raised, t.foreground, outline], [t.solid, t.solid_foreground, t.solid], yes)));
+      .child(button("yes", `${verb} ${a.what}`, [t.raised, t.foreground, outline], [t.solid, t.solid_foreground, t.solid], yes)));
 }

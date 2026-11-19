@@ -1,6 +1,6 @@
 // my-peek (a clone of Herdr's peek 0.1.16): the bar on top of a peeked terminal, in the overlay
 // mods/my-tabs opens (peek.js) for a worker in the Agents list and a child in the close dialog:
-// who it is and how it's doing, who started it, its keep, ✕ to close. Its keep is the Agents
+// who it is and how it's doing, who started it, kill, its keep, ✕ to close. Its keep is the Agents
 // row's (my-tabs.keep): a tab on the worker's own machine, filed with its starter. Herdr's own
 // peek kept it in the shown space, which Herdr refuses for another machine's terminal, and
 // closed anyway. One already in a pane: "go to" it. Props: { terminal, overlay }, or
@@ -36,7 +36,8 @@ export default class Peek extends View {
     return k?.name || title || k?.template || k?.program?.name || k?.address || "";
   }
 
-  button(t, id, label, tip, onClick) {
+  // danger (kill): under the pointer it turns solid red, as the close dialog's End all does.
+  button(t, id, label, tip, onClick, danger = false) {
     return h_flex()
       .id(id)
       .h(22)
@@ -47,7 +48,7 @@ export default class Peek extends View {
       .rounded(5)
       .text_color(t.muted)
       .cursor_pointer()
-      .hover((s) => s.bg(t.hover).text_color(t.foreground))
+      .hover((s) => (danger ? s.bg(t.blocked).text_color("#ffffff") : s.bg(t.hover).text_color(t.foreground)))
       .when(Boolean(tip), (el) => el.tooltip(tip))
       .on_click(onClick)
       .child(label);
@@ -65,6 +66,7 @@ export default class Peek extends View {
     const home = panes().some((p) => p.terminal === terminal);
     const glyph = st === "working" ? SPIN[0] : st === "idle" ? "○" : st ? "●" : "·";
     const out = svg("mods/my-menu/pop-out.svg").size(14).flex_none();
+    const stop = svg("mods/my-menu/octagon-x.svg").size(14).flex_none();
     return h_flex()
       .size_full()
       .pl(12)
@@ -81,6 +83,12 @@ export default class Peek extends View {
       .when(Boolean(st), (el) => el.child(div().flex_none().text_color(t[st] ?? t.dim).child(WORDS[st] ?? st)))
       .when(Boolean(parent), (el) => el.child(div().truncate().text_color(t.dim).child(`from ${this.nameOf(parent)}`)))
       .child(div().flex_1())
+      // Kill, the worker menu's (my-tabs.kill): it ends now, and the peek goes with it. Left of
+      // keep, away from ✕.
+      .child(this.button(t, "kill", h_flex().gap(5).items_center().child(stop).child("kill"), "End it now", () => {
+        closeOverlay(overlay);
+        run(`my-tabs.kill ${terminal}`);
+      }, true))
       .child(
         home
           ? this.button(t, "keep", h_flex().gap(5).items_center().child(out).child("go to"), "Go to its tab", () => {

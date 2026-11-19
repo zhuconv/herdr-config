@@ -26,15 +26,16 @@ export function descendants(all, addrs) {
 }
 
 // Ends each of `list` (descendants()) through hc, one after another, and names the ones that
-// couldn't be ended (their machine not connected) in a warning. hc, notify: herdr's.
-export async function endEach(list, hc, notify) {
+// couldn't be ended (their machine not connected) in a warning. hc, notify: herdr's; verb: the
+// warning's word for it, as the button that asked said it ("end", or "kill" for Kill).
+export async function endEach(list, hc, notify, verb = "end") {
   const failed = [];
   for (const t of list) {
     const r = await hc(["kill", t.address]).catch(() => null);
     if (r?.code !== 0) failed.push(t);
   }
   if (failed.length) notify({
-    title: `Couldn't end ${failed.length === 1 ? "a worker" : `${failed.length} workers`}`,
+    title: `Couldn't ${verb} ${failed.length === 1 ? "a worker" : `${failed.length} workers`}`,
     body: failed.map((t) => (t.name ? `${t.name} (${t.address})` : t.address)).join("\n"),
     level: "warning", timeout: 12000,
   });
