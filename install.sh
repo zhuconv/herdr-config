@@ -104,8 +104,8 @@ link_skill() { # name
 link_skill hc-workers
 link_skill hc-find
 
-# Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart and PreCompact (added once,
-# never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
+# Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart, PreCompact and
+# PermissionRequest (added once, never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
 python3 agent-note-hook/add-to-claude.py
 python3 agent-note-hook/add-to-codex.py
 # Claude Code's short command names (claude-mods/short-names, put in ~/.claude/mods by paths.sh):

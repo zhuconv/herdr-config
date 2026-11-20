@@ -11,6 +11,12 @@ session (note.job, mods/my-tabs/jobs.js) isn't there. An interrupted reply has n
 SessionStart: a resumed conversation's card (or a fork's, a copy of one) shows its last prompt
 and reply right away, read from its transcript, not only after the next prompt. A new one (or
 /clear) drops the notes the terminal kept from the conversation before.
+PermissionRequest: what Claude waits for you on (a tool to allow, its AskUserQuestion questions)
+goes in note.ask, for the phone app (herdr-mobile), which shows it as a card you can answer.
+Claude writes that call to its transcript only once it has run, at times (Claude Code 2.1.329:
+a two-question ask reached the file after it was answered), so the transcript can't tell. A
+prompt, a reply's end or a new session takes it down; a client keeps it only while the session
+says it is blocked, and only if it is newer than the last time it stopped waiting.
 Each also says where the conversation is, for Herdr's Fork button (mods/my-pane/fork.js), which
 starts a copy of it: note.session (its id), note.cwd (its folder) and note.host, the host Claude
 runs on when that isn't the terminal's own (a compute node, see below; dropped otherwise). Fork
@@ -91,6 +97,10 @@ def main():
     terms = [own] if own and not job else attached(event.get("session_id"))
     if not terms:
         return
+    if name == "PermissionRequest":
+        for term in terms:
+            label(term, f"note.ask={asked(event)}")
+        return
     report = bool(job) and not os.path.isdir(os.path.expanduser("~/.config/herdr-app"))
     if name == "UserPromptSubmit":
         key, text, state = "note.prompt", " ".join((event.get("prompt") or "").split())[:160], "working"
@@ -101,15 +111,15 @@ def main():
         source, path = event.get("source"), event.get("transcript_path")
         if source in ("resume", "fork"):
             prompt, reply = last_prompt(path), gist(last_reply(path))
-            pairs = ("note.state=idle", f"note.prompt={prompt}" if prompt else "note.prompt=", f"note.said={reply}" if reply else "note.said=")
+            pairs = ("note.state=idle", f"note.prompt={prompt}" if prompt else "note.prompt=", f"note.said={reply}" if reply else "note.said=", "note.ask=")
         elif source in ("startup", "clear"):
-            pairs = ("note.state=idle", "note.prompt=", "note.said=")
+            pairs = ("note.state=idle", "note.prompt=", "note.said=", "note.ask=")
         else:
             return
     else:
         return
     if name != "SessionStart":
-        pairs = (f"note.state={state}", *([f"{key}={text}"] if text else []))
+        pairs = (f"note.state={state}", *([f"{key}={text}"] if text else []), "note.ask=")
         if report and name == "UserPromptSubmit":
             pairs += (f"note.bg=working {os.path.basename(job.rstrip('/'))} {now()}",)
     pairs += where(event)
@@ -189,8 +199,10 @@ def forget_ask(sid):
 
 
 def asked(event):
-    """note.ask: {"t": when (UTC), "tool": the tool (Bash, apply_patch, mcp__server__tool),
-    "input": what it was given}, as one line of JSON, long values cut short."""
+    """note.ask: {"t": when (UTC), "tool": the tool (Bash, apply_patch, mcp__server__tool,
+    AskUserQuestion), "input": what it was given}, as one line of JSON, long values cut short.
+    Claude's questions keep their options: past the length, the options' descriptions are cut
+    short, then left out."""
     inp = event.get("tool_input")
     if isinstance(inp, dict):
         inp = {k: v[:3000] if isinstance(v, str) else v for k, v in list(inp.items())[:20]}
@@ -198,6 +210,12 @@ def asked(event):
         inp = {"command": str(inp)[:3000]} if inp else {}
     note = {"t": now(), "tool": str(event.get("tool_name") or ""), "input": inp}
     s = json.dumps(note, ensure_ascii=False, separators=(",", ":"))
+    for cut in (160, 0):
+        if len(s) <= 8000 or not isinstance(inp.get("questions"), list):
+            break
+        qs = [dict(q, options=[dict(o, description=str(o.get("description") or "")[:cut]) if isinstance(o, dict) else o
+                               for o in (q.get("options") or [])]) if isinstance(q, dict) else q for q in inp["questions"]]
+        s = json.dumps({**note, "input": {**inp, "questions": qs}}, ensure_ascii=False, separators=(",", ":"))
     return s if len(s) <= 8000 else json.dumps({**note, "input": {}}, separators=(",", ":"))
 
 
