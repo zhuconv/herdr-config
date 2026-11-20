@@ -17,6 +17,16 @@ done
 rc=$(raycast_script)
 [ -f "$rc" ] && cp "$rc" raycast/herdr-waiting.sh
 
+# Submodules (mobile/, kept private) commit and push on their own first; this repo then
+# records which commit each one is at.
+git submodule foreach --quiet '
+  if [ -n "$(git status --porcelain)" ]; then
+    git add -A
+    git commit -q -m "Update from $(scutil --get ComputerName 2>/dev/null || hostname)"
+  fi
+  if [ -n "$(git log --oneline "@{u}.." 2>/dev/null)" ]; then git push -q && echo "Pushed $sm_path"; fi
+'
+
 git add -A
 if git diff --cached --quiet; then
   echo "Nothing changed."
