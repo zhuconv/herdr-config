@@ -14,7 +14,7 @@ In place of steps 2–3 of "Start a worker", with `me` set as in step 2:
    When `squeue --me` there already shows a job on that partition, start `bash` in place of idev, then `hc send <address> 'ssh <node>'`. Done when `hc read <address>` shows a compute-node prompt (`c6xx-xxx` or `i6xx-xxx`).
 2. Build `task` as in step 2, then add this line to it, with `<tN>` taken from the address (`vista/t2r` → `t2r`):
 
-   > hc's core runs on login1, not on this node. To report, write the report to `~/.cache/workers/<name>.txt`, then run `timeout 60 ssh login1 'HC_TERMINAL_ID=<tN> ~/.local/bin/hc send MANAGER "$(cat ~/.cache/workers/<name>.txt)"' < /dev/null`.
+   > hc's core runs on login1, not on this node. To report, write the report to `~/.cache/workers/<name>.txt`, then run `timeout 120 ssh login1 'HC_TERMINAL_ID=<tN> ~/.local/bin/hc send MANAGER "$(cat ~/.cache/workers/<name>.txt)"' < /dev/null`. When a report fails, resend it as the worker rules say, but in their loop replace `hc send MANAGER "$(cat "$1")"` with `timeout 120 ssh login1 "HC_TERMINAL_ID=<tN> ~/.local/bin/hc send MANAGER \"\$(cat $1)\"" </dev/null`.
 
    `HC_TERMINAL_ID` makes the report arrive tagged as the worker's. Replace MANAGER in it as in step 2.
 3. Put the task in a file there, and start the agent with it:
