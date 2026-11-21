@@ -28,9 +28,9 @@ You are a worker: a manager agent started you through hc, and the user can step 
     EOF
     } > "$f"
     nohup sh -c 'for i in $(seq 1440); do hc send MANAGER "$(cat "$1")" >/dev/null 2>&1
-      case $? in 0) rm -f "$1"; exit ;; 3|4|11) exit ;; esac; sleep 60; done' sh "$f" >/dev/null 2>&1 &
+      case $? in 0|3|4|11) exit ;; esac; sleep 60; done' sh "$f" >/dev/null 2>&1 &
     ```
 
-    Then carry on as after any report.
+    Then carry on as after any report. The file stays as a record.
 - When your permission checks (Claude's auto mode, Codex's auto review) block a risky action and there's no safe way around it, report the block and wait.
 - When you need another agent, on this machine or another, ask your manager.
