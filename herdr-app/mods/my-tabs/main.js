@@ -16,6 +16,8 @@ import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
+// The pane ⌘G just went to, { pane, at }: its header (mods/my-pane) lights up a moment.
+const FLASH = "my-tabs.flash";
 
 // The bar shows one project's tabs (from every space), grouped by directory like the left
 // panel's pills (mods/my-projects; projects.js is a copy of its model). Shared with it: its
@@ -133,6 +135,8 @@ export default class Tabs extends View {
           else if (c === "new-tab") this.newTab();
           else if (c === "reopen") await this.reopen.reopen(cx);
           else if (c === "waiting" || c === "waiting away") this.goWaiting(c === "waiting away");
+          // "flash [pane]": that pane's header (else the focused pane's) lights up, as after ⌘G.
+          else if (c === "flash" || c.startsWith("flash ")) this.flash(c.slice(6).trim() || focused()?.pane);
           else if (c === "switch" || c === "switch-back") this.switchAgent(c === "switch" ? 1 : -1);
           else if (c === "switch-preview") this.switchAgent(1, true);
           else if (/^tab-[1-9]$/.test(c)) this.goTab(Number(c.slice(4)), cx);
@@ -646,8 +650,16 @@ export default class Tabs extends View {
   goWaiting(away) {
     const list = withBackground(agents(), { panes: panes(), spaces: spaces(), terminals: terminals(), keys: agentKeys(shared("new-menu.agents")) });
     const a = pickWaiting(list.map((x) => this.withJob(x)), !away);
-    if (a) run("pane.focus", { pane: a.pane });
+    if (a) {
+      run("pane.focus", { pane: a.pane });
+      this.flash(a.pane);
+    }
     else notify({ title: "No agent is waiting for you", timeout: 2500 });
+  }
+
+  // Shows which pane of its tab that is: mods/my-pane lights up its header (flashState).
+  flash(pane) {
+    if (pane) setShared(FLASH, { pane, at: Date.now() });
   }
 
   // The side panel is remembered per space: switching shows that space's choice

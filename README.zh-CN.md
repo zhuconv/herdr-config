@@ -33,7 +33,7 @@
 | ⌥1–⌥9 | 显示从上往下第 N 个 project 的 tab。按住 ⌥ 能看到编号 |
 | ⌘1–⌘8、⌘9 | 栏里第 N 个 tab；最后一个 tab |
 | ⌃Tab、⌃⇧Tab | 回到你上一个待过的窗格：agent、后台会话、shell，甚至分屏的另一半都算。每张卡片显示最近的 prompt 和回复 |
-| ⌘G | 跳到最近响铃（需要你，或者做完了）的 agent。配合 Raycast 在任何 app 里都能用 |
+| ⌘G | 跳到最近响铃（需要你，或者做完了）的 agent。它所在窗格的标题栏会亮一下再淡出，一眼看出是 tab 里哪个窗格。配合 Raycast 在任何 app 里都能用 |
 | ⌘W | 先关窗格，再关 tab，最后关 space。⌘⇧W 或 ⌘⇧T 恢复 |
 | ⌘T | 在当前 space 新开一个 tab |
 | ⌘H ⌘J ⌘K ⌘L | 在窗格之间移动 |
@@ -89,7 +89,7 @@ git pull && ./install.sh
 | `herdr-app/mods/my-projects/` | Projects 面板，逻辑在 `model.js`。`optwatch.c` 是个小程序，`install.sh` 把它编译到 `~/.local/bin/herdr-optwatch`：它告诉左栏 ⌥ 有没有按住，也告诉 tab 栏拖到栏下面的拖动什么时候松手，因为 mod 只有拿到键盘焦点才知道修饰键（焦点通常在终端里），鼠标也只有在 mod 上方时才听得到。它只在 Herdr 是前台 app 时运行 |
 | `herdr-app/mods/my-tabs/` | tab 栏，还有 Overview 按钮、关闭后可恢复（`reopen.js`）、关闭会断开还在跑的子终端时先问一句（`ask.js`；`workers.js` 判断哪些是 worker，关闭时把它们送回而不是结束，并在要求时结束 manager 的所有 worker）、⌘G（`waiting.js`）和 ⌃Tab 的顺序（`recent.js`）。`jobs.js` 从 `~/.claude/jobs` 里 Claude Code 的记录得出后台会话（`claude attach`）的状态，是监听文件变化，不是轮询：tab 栏把状态写到会话所在终端的 `note.job` 标签上，其他面板读这个标签；响铃规则和 Herdr 一样。服务器上的会话来自 hook 在那边写的 `note.bg` 标签，从 Herdr 自己的终端列表里读（Herdr 不在前台时不重画，所以那时每 2 秒看一次）。把 worker 留成 tab 和送回，走它的 `keep`、`sendback`、`peek` 三个命令，Agents 列表、菜单和 peek 都用它们（`peek.js` 负责打开 peek）。`layoutdoc.js` 合并两个 tab 时，一次改写那台机器的布局，所以出来就是分好屏的样子；Herdr 的命令只能在当前焦点窗格旁边分屏，那样得先单独显示目标 tab。这个布局格式不是公开接口，哪天变了，合并会退回用那些命令。`projects.js` 是 my-projects 的 `model.js` 的拷贝，因为 mod 不能引用别的 mod 的文件 |
 | `herdr-app/mods/agent-switcher/` | ⌃Tab 弹窗：每个窗格一张卡片，agent 显示最近的 prompt 和回复，shell 显示所在目录 |
-| `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带的拷贝）：分屏、全屏、关闭这几个按钮换成两个，鼠标移到标题栏上才出现：Fork，在跑 Claude 的窗格上（fork.js 在那台机器上从 Claude Code 自己的记录里找到它的会话；跑在计算节点上的 Claude 则看 hook 写的标签，副本经 ssh 开在那个节点上）；Move to new tab，在分屏里的窗格上。agent 的窗格显示它会话的名字（agent 设的标题，和 Agents 列表里一样）；别的机器上的终端，在目录前面标出那台机器 |
+| `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带的拷贝）：分屏、全屏、关闭这几个按钮换成两个，鼠标移到标题栏上才出现：Fork，在跑 Claude 的窗格上（fork.js 在那台机器上从 Claude Code 自己的记录里找到它的会话；跑在计算节点上的 Claude 则看 hook 写的标签，副本经 ssh 开在那个节点上）；Move to new tab，在分屏里的窗格上。agent 的窗格显示它会话的名字（agent 设的标题，和 Agents 列表里一样）；别的机器上的终端，在目录前面标出那台机器。⌘G 跳到的窗格，标题栏会亮一下（窗格的边框是 Herdr 自己画的，mod 改不了，所以亮的是标题栏） |
 | `herdr-app/mods/my-menu/` | 右键菜单（Herdr 自带的拷贝）：分屏里的窗格多一项 Move to new tab；顶部栏里分屏的 tab，每个名字有一项 Move X to new tab。Agents 列表里 worker 那一行的菜单：Keep as tab 和 Peek，或者 Go to tab 和 Send back |
 | `herdr-app/mods/my-peek/` | peek 一个 worker 时上面那条栏（Herdr 自带 peek 的拷贝）。它的 keep 和 Agents 列表的一样：变成 worker 自己那台机器上的 tab。Herdr 自带的会把它放进当前显示的 space，worker 在别的机器上时会失败 |
 | `herdr-app/mods/my-toast/` | 右下角的通知（Herdr 自带的拷贝）：agent 做完或需要你时，提示里用 Agents 列表里的名字（你给 tab 起的名字，否则是会话的名字），而不是“Claude Code”。`projects.js` 同样是 my-projects 的 `model.js` 的拷贝 |

@@ -9,11 +9,20 @@
 // copy of its conversation, started beside it (fork.js). Move to new tab, for a pane of a
 // split: it gets a tab of its own (mods/my-tabs "split-out", which the tab bar's drags and
 // right-click menus use too). Keys and the right-click menu still split, zoom and close.
+// And a flash: the header of the pane ⌘G goes to lights up and fades (flashState).
 
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
-import { panes, props, run, theme, home, layout, hc, exec, notify } from "herdr";
+import { panes, props, run, theme, home, layout, hc, exec, notify, shared, window } from "herdr";
 import { claudeIn, FIND, pick, forkArgv, elsewhere, remoteArgv } from "./fork.js";
+
+// ⌘G (mods/my-tabs "waiting") marks the pane it goes to: shared("my-tabs.flash") is { pane, at }.
+// That pane's header lights up, holds a moment and fades, so you can tell which pane of the tab
+// it is. The header, not the border: Herdr draws the border, and a mod can't change it while it
+// runs. Dracula's purple, brighter than the layout's focus border (#6272a4).
+const FLASH = "my-tabs.flash";
+const FLASH_COLOR = "#bd93f9";
+const HOLD = 600, FADE = 900; // ms: lit, then fading
 
 // Match the first visible tab frame, including the active child of a stack.
 function paneFrame(node) {
@@ -103,10 +112,37 @@ function openBeside(p, argv, dir) {
 }
 
 export default class Pane extends View {
-  init() { this.hovered = false; this.forking = false; }
+  init() { this.hovered = false; this.forking = false; this.flash = null; this.flashAt = null; this.flashTimers = []; }
 
   me() {
     return panes().find((p) => p.pane === props()?.pane);
+  }
+
+  // This pane's flash: "on", then "fade" (the transition draws it out), then null. A new mark
+  // starts one; a mark over 3 s old is from before (a restart). When ⌘G came from another app
+  // (Raycast), it starts once the window is in front. A mark for another pane ends this one's.
+  flashState(pane, cx) {
+    const f = shared(FLASH);
+    if (f?.pane !== pane) {
+      if (this.flash) this.stopFlash();
+      return null;
+    }
+    if (f.at !== this.flashAt && Date.now() - f.at < 3000 && window()?.active) {
+      this.stopFlash();
+      this.flashAt = f.at;
+      this.flash = "on";
+      this.flashTimers = [
+        cx.timer.after(HOLD, (cx) => { this.flash = "fade"; cx.notify(); }),
+        cx.timer.after(HOLD + FADE + 100, (cx) => { this.flash = null; cx.notify(); }),
+      ];
+    }
+    return this.flash;
+  }
+
+  stopFlash() {
+    for (const t of this.flashTimers) t.cancel();
+    this.flashTimers = [];
+    this.flash = null;
   }
 
   button(t, id, icon, tip, act) {
@@ -145,11 +181,23 @@ export default class Pane extends View {
     const pic = icon(p.program, 14, t.dim);
     const st = p.status;
     const pane = p.pane;
-    const bottom = paneFrame(layout())?.header?.position === "bottom";
+    const frame = paneFrame(layout());
+    const bottom = frame?.header?.position === "bottom";
     const split = Boolean(p.terminal) && panes().filter((x) => x.tab === p.tab).length > 1;
     const claude = Boolean(p.terminal) && (p.program?.key === "claude" || p.app === "claude-code");
+    const flash = this.flashState(pane, cx);
+    // Its corners follow the frame's, inside the frame's border. A new id for each flash, so it
+    // starts lit rather than fading in from the last one's end.
+    const r = Math.max(0, (frame?.radius ?? 0) - (frame?.focus?.width ?? 1));
+    const glow = () => div().id(`ph-flash-${pane}-${this.flashAt}`).absolute().inset_0()
+      .when(bottom, d => d.rounded_b(r))
+      .when(!bottom, d => d.rounded_t(r))
+      .border(2).border_color(FLASH_COLOR).bg(FLASH_COLOR + "38")
+      .opacity(flash === "on" ? 1 : 0)
+      .transition("opacity", { duration: FADE, easing: "ease-in-out" });
     return h_flex()
       .id(`pane-head-${pane}`)
+      .relative()
       .size_full()
       .px(10)
       .gap(8)
@@ -161,6 +209,7 @@ export default class Pane extends View {
       .text_size(12)
       .on_hover((hovered, cx) => { this.hovered = hovered; cx.notify(); })
       .on_click(() => run("pane.focus", { pane }))
+      .when(Boolean(flash), (el) => el.child(glow()))
       .when(Boolean(pic), (el) => el.child(pic))
       .child(div().flex_none().truncate().max_w(260).font_medium().text_color(t.foreground).child(name))
       .child(div().flex_1().truncate().text_color(t.dim).child(where(p)))
