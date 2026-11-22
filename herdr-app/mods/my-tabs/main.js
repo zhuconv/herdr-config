@@ -2,13 +2,13 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings,
   terminals, focused, machines, hc, exec, notify, nextCommand, agents, setShared, home,
-  watchFolder, readTextFile, writeTextFile, checking, playSound, props } from "herdr";
+  watchFolder, readTextFile, writeTextFile, checking, playSound, props, closeOverlay } from "herdr";
 import { readdir } from "fs/promises";
 import { Reopener } from "./reopen.js";
 import { childrenOf, askClose, askView } from "./ask.js";
 import { workersOf, descendants, endEach } from "./workers.js";
 import { pickWaiting } from "./waiting.js";
-import { brightened, FLASH_COLOR } from "./flash.js";
+import { paneBox, rings, strips } from "./glow.js";
 import { Jobs, attachedTo, fromRecord, fromNote, matches } from "./jobs.js";
 import { Recent } from "./recent.js";
 import { openPeek } from "./peek.js";
@@ -17,10 +17,9 @@ import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
-// ⌘G's flash (flash.js): how long the focused pane's border stays bright, in ms. Herdr's own
-// layouts are never flashed: they're replaced on every start, and an edited one is moved aside.
-const FLASH_MS = 800;
-const SHIPPED = new Set(["main", "terminals", "win98"]);
+// ⌘G's glow (glow.js): how far the halo reaches out from the pane, in px at zoom 1 (the gap between
+// panes is 8), how long it stays, then how long it fades, in ms.
+const GLOW_SIZE = 7, GLOW_HOLD = 380, GLOW_FADE = 480;
 
 // The bar shows one project's tabs (from every space), grouped by directory like the left
 // panel's pills (mods/my-projects; projects.js is a copy of its model). Shared with it: its
@@ -138,8 +137,8 @@ export default class Tabs extends View {
           else if (c === "new-tab") this.newTab();
           else if (c === "reopen") await this.reopen.reopen(cx);
           else if (c === "waiting" || c === "waiting away") this.goWaiting(cx, c === "waiting away");
-          // "flash": the focused pane's border lights up a moment, as after ⌘G.
-          else if (c === "flash") this.flash(cx);
+          // "glow": the focused pane's halo, as after ⌘G.
+          else if (c === "glow") this.glow(cx, focused()?.pane);
           else if (c === "switch" || c === "switch-back") this.switchAgent(c === "switch" ? 1 : -1);
           else if (c === "switch-preview") this.switchAgent(1, true);
           else if (/^tab-[1-9]$/.test(c)) this.goTab(Number(c.slice(4)), cx);
@@ -165,8 +164,6 @@ export default class Tabs extends View {
       }
     });
     this.sweeper = cx.timer.every(15000, () => this.reopen.sweep());
-    // A ⌘G flash cut short (a quit, a reload) leaves the bright border in the layout file.
-    if (!checking()) cx.spawn(async () => { await this.unflash(); });
     // my-tabs: "waiting" (⌘G) goes to the agent that rang last (waiting.js). "waiting away"
     // comes from the Raycast hotkey (~/Documents/Raycast/bear/herdr-waiting.sh) when Herdr wasn't
     // in front, so the focused agent isn't one you were looking at.
@@ -657,55 +654,46 @@ export default class Tabs extends View {
     const a = pickWaiting(list.map((x) => this.withJob(x)), !away);
     if (a) {
       run("pane.focus", { pane: a.pane });
-      this.flash(cx, away);
+      this.glow(cx, a.pane);
     }
     else notify({ title: "No agent is waiting for you", timeout: 2500 });
   }
 
-  // ⌘G's flash (flash.js): the focused pane's border is bright for FLASH_MS, then as it was. It
-  // follows the focus, so a press meanwhile only makes it last from then. From another app
-  // (Raycast's ⌘G), it waits up to 3 s for Herdr's window to come to the front.
-  async flash(cx, away = false) {
-    this.flashUntil = Date.now() + FLASH_MS;
-    if (this.flashing) return;
-    const name = shared("layout");
-    if (!name || SHIPPED.has(name)) return;
-    this.flashing = true;
-    const sleep = (ms) => new Promise((done) => cx.timer.after(ms, () => done()));
+  // ⌘G's glow (glow.js; mods/my-glow draws it): a halo around the outside of the pane it lands on,
+  // in the pane's focus color, held a moment and faded out. It shows with the tab, on Herdr's next
+  // frames; a split tab first reads its tree from its machine (about 50 ms). From another app
+  // (Raycast's ⌘G), my-glow holds it until Herdr's window is in front. A press meanwhile replaces it.
+  async glow(cx, paneId) {
+    const run = (this.glowRun = (this.glowRun ?? 0) + 1);
     try {
-      if (away) {
-        const until = Date.now() + 3000;
-        while (!window()?.active) {
-          if (Date.now() > until) return;
-          await sleep(100);
-        }
-        this.flashUntil = Date.now() + FLASH_MS;
+      for (const id of this.glows ?? []) closeOverlay(id);
+      this.glows = [];
+      const p = panes().find((x) => x.pane === paneId);
+      const tab = p && spaces().flatMap((s) => s.tabs.map((t) => ({ ...t, machine: s.machine }))).find((t) => t.id === p.tab);
+      if (!tab) return;
+      const pane = localId(paneId);
+      // Alone or zoomed, it fills the tab: no tree to read.
+      let root = { id: "tab", type: "row", children: [{ id: pane, type: "block", content: {} }] };
+      if (tab.panes > 1 && !p.zoomed) {
+        const doc = (await coreCall("doc.get", { name: "herdr-app", ...(tab.machine ? { on: tab.machine } : {}) }))?.result?.value;
+        root = doc?.spaces?.flatMap((s) => s.tabs ?? []).find((t) => t.id === localId(tab.id))?.root;
+        if (run !== this.glowRun) return;
       }
-      const path = `${home()}/.config/herdr-app/layouts/${name}.json`;
-      const text = await readTextFile(path);
-      const bright = text && brightened(text, FLASH_COLOR);
-      if (!bright) return;
-      localStorage.setItem("flash", JSON.stringify({ path, text, bright }));
-      await writeTextFile(path, bright, text);
-      while (Date.now() < this.flashUntil) await sleep(this.flashUntil - Date.now());
+      const zoom = Number(settings()?.zoom) || 1, viewport = globalThis.window.viewport_size();
+      const box = root && paneBox({ layout: layout(), root, pane, panes: tab.panes, viewport, zoom });
+      if (!box) return;
+      const frame = box.frame ?? {}, name = frame.focus?.color ?? frame.border?.color ?? "border";
+      const color = String(name).startsWith("#") ? name : theme()?.[name] ?? "#6272a4";
+      const size = GLOW_SIZE * zoom, radius = (Number(frame.radius) || 0) * zoom;
+      const all = rings(box, { size, radius });
+      for (const s of strips(box, { size, corner: radius + 1, viewport })) {
+        // An overlay's size is px at zoom 1, and up to 1 would be a share of the window.
+        if (s.w / zoom <= 1 || s.h / zoom <= 1) continue;
+        this.glows.push(openOverlay({ mod: "my-glow", kind: "window", frame: "none", at: { x: s.x, y: s.y }, width: s.w / zoom, height: s.h / zoom,
+          props: { rings: all.map((r) => ({ ...r, x: r.x - s.x, y: r.y - s.y })), color, hold: GLOW_HOLD, fade: GLOW_FADE } }));
+      }
     } catch (err) {
-      console.log("my-tabs flash", String(err?.stack ?? err));
-    } finally {
-      await this.unflash();
-      this.flashing = false;
-    }
-  }
-
-  // Puts the layout file back as it was before a flash, while it still holds the flash's copy
-  // (an edit since wins). Also at start, after a quit in the middle of one.
-  async unflash() {
-    try {
-      const saved = JSON.parse(localStorage.getItem("flash") ?? "null");
-      if (!saved?.path) return;
-      if ((await readTextFile(saved.path)) === saved.bright) await writeTextFile(saved.path, saved.text, saved.bright);
-      localStorage.removeItem("flash");
-    } catch (err) {
-      console.log("my-tabs unflash", String(err?.stack ?? err));
+      console.log("my-tabs glow", String(err?.stack ?? err));
     }
   }
 

@@ -16,6 +16,7 @@ ITEMS=(
   "herdr-app/mods/my-pane/|$H/mods/my-pane/"
   "herdr-app/mods/my-menu/|$H/mods/my-menu/"
   "herdr-app/mods/my-peek/|$H/mods/my-peek/"
+  "herdr-app/mods/my-glow/|$H/mods/my-glow/"
   "herdr-app/mods/my-toast/|$H/mods/my-toast/"
   "herdr-app/mods/my-chrome/|$H/mods/my-chrome/"
   "herdr-app/mods/agent-switcher/|$H/mods/agent-switcher/"
