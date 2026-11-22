@@ -1,5 +1,9 @@
-// Short names for slash commands.
+// Short names.
 //
+// For a new session: it names itself from its first message, in two or three
+// words (session-name.ts).
+//
+// For slash commands:
 // - Typing a space after one turns it into the full name in the box:
 //   `/ren ` becomes `/rename `, so Enter sends the real command with its
 //   arguments, as if it had been typed in full.
@@ -9,6 +13,7 @@
 // To add or change one, edit SHORT: the key is what you type (letters, digits,
 // `_`, `-`; not a built-in's name or alias), the value the command it stands for.
 import type { Register } from 'claude-code'
+import { nameSessions } from './session-name'
 
 const SHORT: Record<string, string> = {
   ren: 'rename',
@@ -32,6 +37,8 @@ function expand(text: string): string {
 }
 
 export const register: Register = on => {
+  nameSessions(on)
+
   on('session.start', async ($, e, next) => {
     for (const [short, full] of Object.entries(SHORT)) {
       await $.command.register({

@@ -1,5 +1,5 @@
 {
   "name": "short-names",
-  "version": "0.1.0",
-  "description": "Short names for slash commands: /ren <name> runs /rename <name>, /u runs /usage, and so on"
+  "version": "0.2.0",
+  "description": "Short names: a new session names itself from its first message; /ren <name> runs /rename <name>, /u runs /usage, and so on"
 }

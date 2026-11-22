@@ -1,7 +1,8 @@
 // A pane's header, for layouts that frame their panes:
 //   { "tab": "active", "pane": { "header": { "content": { "mod": "my-pane" } } } }
-// Shows the program's icon (the app's program table), the agent's name or
-// the terminal's title, the folder, and the agent's status. Props from the app:
+// Shows the program's icon (the app's program table), the session's name (an
+// agent's: the name it gave itself, as the Agents list shows it) or the
+// terminal's title, the folder, and the agent's status. Props from the app:
 // { pane, terminal }. Click: focus the pane.
 // my-pane (a clone of Herdr's pane 0.1.15): instead of split, zoom and close, two buttons, on
 // hover. Fork, for a pane running Claude (or showing one on a compute node, through ssh): a
@@ -39,6 +40,20 @@ function folder(cwd) {
   if (!cwd) return "";
   const h = home();
   return cwd === h ? "~" : cwd.startsWith(h + "/") ? "~" + cwd.slice(h.length) : cwd;
+}
+
+// An agent's name, as the Agents list gives it: the title it set, when that says something
+// (Claude Code's session name, else its own short title for the conversation; a Codex thread's
+// name, the folder after " | " left out), else the program's name. Claude puts a spinner or a
+// mark before its title; the name is what follows.
+function agentName(p) {
+  const prog = p.program?.name ?? "";
+  let raw = String(p.title ?? "").trim();
+  if (p.program?.key === "codex") raw = raw.replace(/\s+\|\s+[^|]+$/, "");
+  const live = raw.replace(/^[^\p{L}\p{N}]+/u, "").trim();
+  const telling = Boolean(live) && !/^[~/]|^[A-Za-z]:\\/.test(raw) && !live.includes("@") && live !== prog
+    && live.toLowerCase() !== p.program?.key && live !== String(p.terminal ?? "").split("/").pop();
+  return telling ? live : prog;
 }
 
 const machineOf = (address) => {
@@ -126,7 +141,7 @@ export default class Pane extends View {
     const t = theme();
     const p = this.me();
     if (!p) return div();
-    const name = ((p.program?.agent || p.program?.shell) && p.program.name) || p.title || p.program?.name || "shell";
+    const name = (p.program?.agent && agentName(p)) || (p.program?.shell && p.program.name) || p.title || p.program?.name || "shell";
     const pic = icon(p.program, 14, t.dim);
     const st = p.status;
     const pane = p.pane;
