@@ -2,7 +2,7 @@
 // first prompts only, and made a few lowercase words.
 import type { On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
-import { asName, gist, MAX } from '../hooks/session-name'
+import { asName, gist, NAME_MAX as MAX } from '../hooks/register'
 
 const usage = { input_tokens: 1, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }
 
