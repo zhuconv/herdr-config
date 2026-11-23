@@ -15,7 +15,6 @@
     "cmd-shift-l": "layout.switch",
     "cmd-n": "space.new",
     "cmd-p": "mod.open:picker",
-    "cmd-shift-m": {"command": "pane.split", "args": {"direction": "right", "mod": "agenttrail"}},
     "cmd-shift-p": "app.palette",
     "cmd-shift-o": "mod.open:agent-deck-overview",
     "cmd-,": "app.settings",
