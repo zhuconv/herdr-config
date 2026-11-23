@@ -81,6 +81,17 @@ gh repo clone zhuconv/herdr-config ~/herdr-config && ~/herdr-config/install.sh
 git pull && ./install.sh
 ```
 
+## Herdr 提示更新时
+
+更新不会覆盖这套配置：Herdr 只重写它自带的 mod 和布局，自带的被改过的话，会先挪到一边再写新版。它不保证的是这些 mod 更新后还能照常工作，因为有几处依赖了 Herdr 内部：⌘G 的光晕照抄了它算窗格位置的代码，合并 tab 直接改它的布局文档，从它那里复制来的 mod 也收不到它的改动。所以更新提示出来时：
+
+```sh
+herdr-update-check           # 这次更新对这套配置安全吗？不安全时会说要看哪里
+herdr-update-check --after   # 点 Restart 之后：mod 都能加载吗，各台机器没问题吧
+```
+
+它在这些 mod 依赖 Herdr 的地方，对比正在用的版本和等着装的版本的源码（mod 接口，用到的命令、标签和名字，算窗格位置的代码，布局格式，复制来的 mod），并检查 herdr-core：是否换了新一代 core，以及哪些机器的 core 带着还没发布的修复（`update-check.py` 里的 `FIXES`）：在这些机器上点设置 → Machines 里的 Update，会换成不带修复的发布版。`--from 0.1.16 --to 0.1.17` 可以对比任意两个版本。`install.sh` 会把它链接到 `~/.local/bin`。
+
 ## 里面有什么
 
 | 位置 | 内容 |
@@ -108,6 +119,7 @@ git pull && ./install.sh
 | `agent-plugin/claude/mods/accounts/` | `/auth` 和 artifact 链接上的账号标签，一个 Claude Code mod。`/auth` 运行 cswap 时去掉 `CLAUDE_CONFIG_DIR`，所以切的总是这台机器的登录。Artifact 工具上的 `tool.call` hook 从会话的 `.claude.json` 读出它登录的账号，在 `~/.config/claude-accounts/accounts.json` 里查到别名，把带 `#acct=<别名>` 的链接交给模型，调用下面也显示一行这个链接。`tests/` 在一台假机器上测它（`claude plugin test agent-plugin/claude/mods/accounts`） |
 | `raycast/` | 任何 app 里按 ⌘G 的 Raycast 脚本；`postkey.c` 让 VS Code 里的 ⌘G 照常是"查找下一个" |
 | `install.sh`、`save.sh`、`paths.sh` | 安装、存回仓库，以及同步哪些文件的清单 |
+| `update-check.py` | `herdr-update-check`：Herdr 更新前后的检查（见上） |
 | `docs/` | 可点击模型（GitHub Pages 发布）和截图。`index.html` 是设计画布的文件换成示例名字后的版本；`support.js` 用 [Preact](https://preactjs.com) 让它跑起来 |
 
 不同步的：Herdr 自己写的状态（`shared.json`、`view.json`、`data/` 等）和 hc 的机器配置（新电脑上用 `hc machine add` 加）。

@@ -139,6 +139,9 @@ build_c "$HOME/.local/share/postkey/postkey.c" "$HOME/.local/bin/postkey" \
 build_c "$H/mods/my-projects/optwatch.c" "$HOME/.local/bin/herdr-optwatch" \
   || echo "herdr-optwatch wasn't built (needs the Xcode Command Line Tools): holding ⌥ won't number the projects."
 
+# herdr-update-check: run it when Herdr's update pill shows, and again after the restart.
+ln -sfn "$PWD/update-check.py" "$HOME/.local/bin/herdr-update-check"
+
 rc=$(raycast_script)
 mkdir -p "$(dirname "$rc")"
 [ -e "$rc" ] && ! cmp -s raycast/herdr-waiting.sh "$rc" && keep "$rc"

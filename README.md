@@ -81,6 +81,17 @@ On the other Macs:
 git pull && ./install.sh
 ```
 
+## When Herdr offers an update
+
+An update never overwrites this config: Herdr rewrites only its own mods and layouts, and moves one that was edited aside first. What it doesn't promise is that these mods keep working, since a few lean on Herdr itself: ⌘G's halo copies its pane layout code, joining tabs rewrites its layout document, and the mods copied from Herdr's don't get its changes. So when the update pill shows:
+
+```sh
+herdr-update-check           # is the waiting update safe for this setup? Says what to look at if not
+herdr-update-check --after   # after Restart: do all the mods load, are the machines fine?
+```
+
+It compares Herdr's source at the running and the waiting release where these mods depend on it (the mod API, the commands, labels and names they use, the pane layout code, the layout formats, the mods they copy), and checks herdr-core: a new core generation, and machines whose core carries fixes no release has yet (`FIXES` in `update-check.py`), on which Settings → Machines' Update would put a release without them. `--from 0.1.16 --to 0.1.17` compares any two releases. `install.sh` links it into `~/.local/bin`.
+
 ## What's inside
 
 | Path | What it is |
@@ -108,6 +119,7 @@ git pull && ./install.sh
 | `agent-plugin/claude/mods/accounts/` | `/auth` and the account tags on artifact links, a Claude Code mod. `/auth` runs cswap with `CLAUDE_CONFIG_DIR` unset, so it always switches the machine's login. A `tool.call` hook on the Artifact tool reads the session's login from its `.claude.json`, finds its alias in `~/.config/claude-accounts/accounts.json`, and gives the model the link with `#acct=<alias>`, which also shows as a line under the call. `tests/` runs it against a made-up machine (`claude plugin test agent-plugin/claude/mods/accounts`) |
 | `raycast/` | The Raycast script for ⌘G in any app. `postkey.c` keeps ⌘G as Find Next in VS Code |
 | `install.sh`, `save.sh`, `paths.sh` | Install, save back, and the list of what's synced |
+| `update-check.py` | `herdr-update-check`, the check before and after a Herdr update (above) |
 | `docs/` | The clickable mock (served by GitHub Pages) and the screenshot. `index.html` is the design canvas's file with sample names; `support.js` plays it with [Preact](https://preactjs.com) |
 
 Not synced: the state Herdr writes itself (`shared.json`, `view.json`, `data/`, …) and hc's machines (add them on a new Mac with `hc machine add`).
