@@ -23,6 +23,14 @@
 // A mod pane (a viewer) closes at once and doesn't come back; so do terminals closed with
 // the right-click menu's Close or a pane's ×.
 //
+// An agent can also take its pane away itself: when it is the terminal's own program (a manager
+// or worker hc started, a fork), Ctrl+C or /exit ends the terminal and Herdr removes the pane, the
+// tab with its last one. main.js notices the pane go, and hc's record of the terminal says it ended
+// by itself; that is a record here too (exitRecord), ended from the start, so ⌘⇧W resumes the
+// agent's session in its folder and tab. Killed ones (a close that ends at once) stay closed.
+// Whichever way an agent comes back, a session already running again elsewhere isn't started
+// twice: its pane gets focus instead.
+//
 // A worker (workers.js: its hc parent still runs) is parked the same way but never ended
 // here: it goes back under its parent, still running, and ⌘⇧W shows it again. A close the
 // dialog's "End all" made (`end`) ends everything running under its terminals
@@ -35,6 +43,11 @@ const KEEP = 20; // closed tabs remembered
 const MAX_AGE = 24 * 3600 * 1000;
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/;
 const SHELLS = new Set(["zsh", "bash", "sh", "fish", "dash", "ksh", "tcsh", "csh", "nu", "xonsh", "elvish"]);
+// How a terminal ended by itself (hc's reason): its program exited, or died of a signal.
+// "killed" is someone's close.
+const ENDED = new Set(["exited", "signaled"]);
+// Login nodes, where agents never start (they run on compute nodes): the mods' LOGIN_NODES.
+const NO_AGENTS = ["vista", "vista2", "vista3"];
 
 // On the terminal's machine, with its root pid as $1: the root's command line now (after any
 // exec), then each claude / codex process under it: kind, depth (0: the root itself), pid,
@@ -160,6 +173,74 @@ export function plan(pane, info) {
   return { argv: ["sh", "-c", 'exec "${SHELL:-/bin/sh}" -l'], cwd, note: `Not started again: ${root}` };
 }
 
+/** The agent a terminal ran as its own program ("claude" or "codex"), also through a shell's
+ *  command line (`zsh -lic 'claude …'`, this file's `sh -c … 'exec claude …'`); else null: a
+ *  shell, ssh, idev, where the agent ran inside something that outlives it, or elsewhere. */
+export function ownAgent(argv) {
+  if (!Array.isArray(argv) || !argv.length) return null;
+  const agent = (w) => (w === "claude" || w === "codex" ? w : null);
+  const first = base(argv[0]);
+  if (agent(first)) return first;
+  if (!SHELLS.has(first)) return null;
+  for (const a of argv.slice(1)) {
+    if (String(a).startsWith("-")) continue;
+    const w = words(a);
+    const found = agent(base(w[0] === "exec" ? w[1] : w[0]));
+    if (found) return found;
+  }
+  return null;
+}
+
+/** A live terminal (not `except`) whose agent runs this session again, by its hook's label
+ *  note.session; a label left behind by an agent that exited back to its shell doesn't count. */
+export function runningAs(terminals, session, except = null) {
+  if (!session) return null;
+  return (terminals ?? []).find((t) => t.state === "live" && t.address !== except
+    && t.labels?.["note.session"] === session && Boolean(t.program?.agent || t.report)) ?? null;
+}
+
+/** What the bar knows of an agent's pane while it shows (main.js keeps one per agent pane, to
+ *  have it once the pane has gone): pane p of tab t in space s. */
+export function paneSnap(p, s, t) {
+  return {
+    terminal: p.terminal, title: p.title ?? "", cwd: p.cwd ?? null, app: p.app ?? null,
+    machine: s.machine ?? null,
+    space: { id: s.id, name: s.name, named: s.named, index: s.index },
+    tab: { id: t.id, name: t.name, named: t.named, index: t.index },
+  };
+}
+
+/** The record for an agent whose pane went because it ended by itself (Ctrl+C, /exit, a crash),
+ *  from its pane as last seen (paneSnap) and hc's record of the terminal since (`hc get --json`:
+ *  state, reason, argv, labels): ⌘⇧W resumes the session the agent-note hook labelled
+ *  (note.session) in its folder (note.cwd). null when it shouldn't come back that way: still
+ *  running (parked, moved), killed, not the terminal's own program, its conversation on another
+ *  host (note.host: a compute node behind ssh), no session known, or a login node.
+ *  gone: its tab went with it. */
+export function exitRecord(snap, d, now = Date.now(), gone = false) {
+  if (!snap?.terminal || !d || d.state === "live" || !ENDED.has(d.reason)) return null;
+  if (NO_AGENTS.includes(snap.machine ?? "")) return null;
+  const argv = Array.isArray(d.argv) ? d.argv.map(String) : [];
+  const kind = ownAgent(argv);
+  if (!kind) return null;
+  const labels = d.labels && typeof d.labels === "object" ? d.labels : {};
+  if (labels["note.host"]) return null;
+  // Without the hook's label, the session it was started to resume (not a fork: that is a new one).
+  const line = argv.join(" ");
+  const resumed = /--fork-session\b/.test(line) ? null
+    : (line.match(new RegExp(`${kind === "claude" ? "--resume" : "\\bresume"}\\s+(${UUID.source})`)) ?? [])[1] ?? null;
+  const session = String(labels["note.session"] ?? "").match(UUID)?.[0] ?? resumed;
+  if (!session) return null;
+  const cwd = labels["note.cwd"] || d.cwd || snap.cwd || null;
+  const t = snap.terminal;
+  return {
+    kind: gone ? "tab" : "pane", at: now, until: now, agent: true, end: false, expired: true, exited: true,
+    machine: snap.machine ?? null, space: snap.space, tab: snap.tab,
+    panes: [{ terminal: t, cwd, title: snap.title ?? "", agent: true, focused: true, back: false }],
+    info: { [t]: { argv, name: d.name ?? null, labels, cwd, root: null, agent: { kind, depth: 0, args: line, session, cwd } } },
+  };
+}
+
 export class Reopener {
   // h: the herdr functions it uses; store: get/set strings (the mod copy's localStorage).
   constructor(h, store) {
@@ -238,6 +319,14 @@ export class Reopener {
     cx.spawn(async (cx) => this.settle(cx, rec, !pane && inTab.length > terms.length));
   }
 
+  // An agent that ended by itself (exitRecord, from main.js): ⌘⇧W resumes it.
+  exited(rec) {
+    this.closed.push(rec);
+    this.prune();
+    this.save();
+    this.h.notify({ title: `“${title(rec)}” exited`, body: "⌘⇧W or ⌘⇧T resumes it.", timeout: 4000 });
+  }
+
   // After ⌘W: drop terminals whose pane didn't go (parking failed), close what is left of
   // the tab (mod panes), then note how each terminal could start again once it has ended.
   async settle(cx, rec, mods) {
@@ -291,6 +380,7 @@ export class Reopener {
     const shown = new Set(this.h.panes().map((p) => p.terminal).filter(Boolean));
     const notes = [];
     const back = {}; // closed terminal -> the one that shows it again
+    const twins = []; // agents whose session already runs again in another terminal
     for (const p of rec.panes) {
       if (shown.has(p.terminal)) continue; // already shown again some other way
       if (live.get(p.terminal)?.state === "live") {
@@ -298,6 +388,8 @@ export class Reopener {
         if (r.code === 0) { back[p.terminal] = p.terminal; continue; }
       }
       const info = rec.info?.[p.terminal] ?? null;
+      const twin = runningAs(this.h.terminals(), info?.agent?.session, p.terminal);
+      if (twin) { twins.push(twin); continue; }
       const how = plan(p, info);
       const address = await this.start(rec, info, how);
       if (address) {
@@ -305,7 +397,13 @@ export class Reopener {
         if (how.note) notes.push(how.note);
       }
     }
+    if (twins.length) notes.push(`Already running: ${twins.map((t) => t.name || t.address).join(", ")}. Not started twice.`);
     if (!Object.keys(back).length) {
+      if (twins.length) {
+        this.h.run("agent.focus", { terminal: twins[0].address });
+        this.h.notify({ title: `“${title(rec)}” is already running`, body: "Its session runs again in another terminal: that one is shown.", timeout: 5000 });
+        return;
+      }
       this.h.notify({ title: `Couldn't reopen “${title(rec)}”`, level: "warning", timeout: 5000 });
       return;
     }
@@ -319,7 +417,8 @@ export class Reopener {
     const m = rec.machine;
     const own = !how.note; // its labels and name only when it really comes back
     const taken = info?.name && this.h.terminals().some((t) => t.state === "live" && t.name === info.name && machineOf(t.address) === m);
-    const labels = own ? Object.entries(info?.labels ?? {}).filter(([k]) => !k.startsWith("herdr.") && k !== "where") : [];
+    // Its own labels, and its pin in the Agents list; not where Herdr showed it (set above).
+    const labels = own ? Object.entries(info?.labels ?? {}).filter(([k]) => (!k.startsWith("herdr.") || k === "herdr.pinned") && k !== "where") : [];
     const args = ["run", "--bg", "--no-parent", ...(m ? ["--on", m] : []),
       "--label", `herdr.space=${local(rec.space.id)}`, "--label", `herdr.tab=${local(rec.tab.id)}`,
       ...labels.flatMap(([k, v]) => ["--label", `${k}=${v}`]),

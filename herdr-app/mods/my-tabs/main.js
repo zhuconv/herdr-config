@@ -4,7 +4,8 @@ import { spaces, panes, run, openOverlay, theme, window, shared, layout, setting
   terminals, focused, machines, hc, exec, notify, nextCommand, agents, setShared, home,
   watchFolder, readTextFile, writeTextFile, checking, playSound, props, closeOverlay, updates } from "herdr";
 import { readdir } from "fs/promises";
-import { Reopener } from "./reopen.js";
+import { Reopener, paneSnap, exitRecord } from "./reopen.js";
+import { Namer } from "./rename.js";
 import { childrenOf, askClose, askView } from "./ask.js";
 import { workersOf, descendants, endEach } from "./workers.js";
 import { pickWaiting } from "./waiting.js";
@@ -114,8 +115,16 @@ export default class Tabs extends View {
     // my-tabs: ⌘W parks the focused pane, or the tab with its last pane, so that ⌘⇧W can
     // bring it back (reopen.js). keys.json binds them as my-tabs.close / my-tabs.reopen;
     // "close <tab or pane id>" closes that one instead of the focused one.
-    this.reopen = new Reopener({ spaces, panes, terminals, focused, machines, run, hc, exec, notify },
+    // my-tabs: a tab a person renames that holds one Claude renames its session (rename.js); the
+    // names reopen gives tabs back aren't such renames.
+    this.namer = new Namer({ spaces, panes, run, hc, exec, notify });
+    const runOwn = (name, args) => {
+      if (name === "tab.rename") this.namer.expect(args?.id, args?.name);
+      return run(name, args);
+    };
+    this.reopen = new Reopener({ spaces, panes, terminals, focused, machines, run: runOwn, hc, exec, notify },
       { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) });
+    this.agentPanes = null; // each agent pane's paneSnap as last drawn: an agent that ends by itself can come back
     this.commands = cx.spawn(async (cx) => {
       for (;;) {
         const c = String(await nextCommand());
@@ -478,6 +487,56 @@ export default class Tabs extends View {
       if (to) { this.lastShown = null; select(to); }
     }
     return true;
+  }
+
+  // A tab a person just renamed that holds one Claude: its session takes the name, and the tab
+  // then follows the session (rename.js). The work starts after this render.
+  noteRenames(cx) {
+    for (const e of this.namer.see(spaces(), panes())) {
+      cx.spawn(async (cx) => {
+        await cx.sleep(0);
+        await this.namer.rename(cx, e.id, e.name, e.terminal);
+      });
+    }
+  }
+
+  // Each agent's pane as drawn (paneSnap). One gone since the last render, its terminal not shown
+  // elsewhere, is looked up in hc after this render (checkExit).
+  noteExits(cx) {
+    const at = new Map();
+    for (const s of spaces()) for (const t of s.tabs ?? []) at.set(t.id, [s, t]);
+    const all = panes(), now = new Map(), before = this.agentPanes;
+    for (const p of all) {
+      if (!p.terminal || !(p.app || p.program?.agent) || !at.has(p.tab)) continue;
+      const [s, t] = at.get(p.tab);
+      const snap = paneSnap(p, s, t), old = before?.get(p.terminal);
+      // An agent on its way out clears its title, and the pane then shows its address ("t136"):
+      // the name it had is kept for the toast.
+      const bare = !snap.title.trim() || snap.title === p.terminal.split("/").pop();
+      if (old && bare) snap.title = old.title;
+      now.set(p.terminal, snap);
+    }
+    this.agentPanes = now;
+    if (!before) return;
+    const shown = new Set(all.map((p) => p.terminal).filter(Boolean));
+    for (const [terminal, snap] of before) {
+      if (now.has(terminal) || shown.has(terminal)) continue;
+      cx.spawn(async (cx) => {
+        await cx.sleep(0);
+        await this.checkExit(snap);
+      });
+    }
+  }
+
+  // An agent's pane went: if hc says its program ended by itself (not ⌘W's park, a move, a kill),
+  // ⌘⇧W can resume it (reopen.js exitRecord).
+  async checkExit(snap) {
+    if (this.reopen.closed.some((r) => r.panes.some((p) => p.terminal === snap.terminal))) return; // ⌘W parked it
+    let d = null;
+    try { d = JSON.parse((await hc(["get", snap.terminal, "--json"])).stdout || "null"); } catch { return; }
+    const gone = !spaces().some((s) => (s.tabs ?? []).some((t) => t.id === snap.tab.id));
+    const rec = exitRecord(snap, d, Date.now(), gone);
+    if (rec && !this.ended) this.reopen.exited(rec);
   }
 
   // The project shown (null: Unsorted): the one picked in the left panel while focus hasn't
@@ -1140,6 +1199,8 @@ export default class Tabs extends View {
         cx.stop_propagation(); // a press on a tab doesn't drag the window
         const p = this.pressPane;
         this.pressPane = null;
+        // A double-click renames it (Herdr asks for the name); a tab with one Claude names its
+        // session so (rename.js).
         if (e.click_count === 2) { run("tab.rename", { id: tab.id }); return; }
         this.press(p ? { kind: "pane", id: tab.id, ...p } : { kind: "tab", id: tab.id, name: tab.listed[0]?.name, program: tab.listed[0]?.program, count: tab.listed.length }, e);
       })
@@ -1215,6 +1276,9 @@ export default class Tabs extends View {
     // Herdr redraws the bar when focus moves (it reads focused()): this is where moves are noted.
     this.visit();
     this.track();
+    // And when tabs and panes change: a tab a person renamed, an agent's pane gone by itself.
+    this.noteRenames(cx);
+    this.noteExits(cx);
     // And when panes change, or the window comes to the front: which session each attach pane
     // shows, and which finished one you're looking at now.
     const terms = terminals();
