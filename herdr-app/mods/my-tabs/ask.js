@@ -77,7 +77,7 @@ function status(t, k) {
 // A button's hover color: c moved toward white on a dark popover (toward black on a light one)
 // by w, 0 to 1. Herdr's own dialogs fade the button to 88% instead, which greys it out as if
 // it were disabled. c as it is when it isn't a plain #rrggbb.
-function lift(t, c, w) {
+export function lift(t, c, w) {
   const rgb = (s) => (/^#[0-9a-f]{6}$/i.test(s ?? "") ? [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16)) : null);
   const bg = rgb(t.popover), from = rgb(c);
   if (!bg || !from) return c;

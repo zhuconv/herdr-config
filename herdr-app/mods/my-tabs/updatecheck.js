@@ -3,9 +3,9 @@
 // the background and a notification says what it found, beside Herdr's own pill: fine to
 // restart, something to look at first, or don't restart yet. After the restart into the new
 // version, or onto a new herdr-core, it runs again (--after): does every mod load, are the
-// machines fine. A click on the notification opens the whole report in a tab. Pure: main.js
-// looks at updates() every CHECK_EVERY ms (each call reads Herdr's update notes from disk, so
-// not in render) and runs the check.
+// machines fine. A click on the notification opens the whole report in a dialog (updateview.js;
+// reportRows here reads it). Pure: main.js looks at updates() every CHECK_EVERY ms (each call
+// reads Herdr's update notes from disk, so not in render) and runs the check.
 
 export const CHECK_EVERY = 60000;
 // A notification about something to look at stays until it's clicked, or this long.
@@ -32,6 +32,28 @@ export function about(mode, u, before = null) {
 }
 
 const LINE = /^\s+(CHECK|STOP|WARN)\s+(.*)$/;
+const MARK = /^ {2}(ok|note|WARN|CHECK|STOP)\s+(.*)$/;
+const FACT = /^ {2}(\S+)\s{2,}(.*)$/;
+
+/** A saved report (herdr-update-check's output, report-*.txt) as rows to draw: when it ran
+ *  ("when"), its title, the versions ("fact": label, text), each section's heading, each finding
+ *  ("mark": ok, note, WARN, CHECK or STOP) and its detail lines, and the verdict. */
+export function reportRows(text) {
+  const rows = [];
+  String(text ?? "").split("\n").forEach((line, i) => {
+    let m;
+    if (!line.trim()) return;
+    if (i === 0 && line.startsWith("herdr-update-check")) rows.push({ kind: "when", text: line.replace(/^herdr-update-check( --after)?, /, "") });
+    else if (line.startsWith("Herdr update check: ")) rows.push({ kind: "title", text: line.slice(20) });
+    else if (line.startsWith("→ ")) rows.push({ kind: "verdict", text: line.slice(2) });
+    else if ((m = MARK.exec(line))) rows.push({ kind: "mark", mark: m[1], text: m[2] });
+    else if (/^ {5,}\S/.test(line)) rows.push({ kind: "detail", text: line.trim() });
+    else if ((m = FACT.exec(line))) rows.push({ kind: "fact", label: m[1], text: m[2] });
+    else if (!/^\s/.test(line)) rows.push({ kind: "heading", text: line });
+    else rows.push({ kind: "detail", text: line.trim() });
+  });
+  return rows;
+}
 
 /** The notification for a run of the check ({ code, stdout, stderr } from exec): what notify()
  *  takes. `mode`: "before" or "after" the restart; `what`: about(). */

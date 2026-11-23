@@ -9,7 +9,7 @@
 #
 # The tab bar (mods/my-tabs, updatecheck.js) runs the first two by itself, when Herdr has an
 # update ready and once it's installed, and says what they found in a notification; a click on
-# it opens the report (--show) in a tab.
+# it opens the saved report in a dialog.
 #
 # An update never overwrites our files: Herdr rewrites only its own mods and layouts, and moves one
 # that was edited aside first (`<name>-edited`). What it doesn't promise is that our mods keep

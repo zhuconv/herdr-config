@@ -15,6 +15,7 @@ import { openPeek } from "./peek.js";
 import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf, starters, LOCAL_KEY } from "./projects.js";
 import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
 import { CHECK_EVERY, readyKey, installedKey, about, notice } from "./updatecheck.js";
+import { openReport, reportView } from "./updateview.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
@@ -85,8 +86,9 @@ export default class Tabs extends View {
   }
 
   init(_props, cx) {
-    // The close dialog (ask.js) is this mod's overlay: that copy draws only the dialog.
-    if (props()?.closeAsk) {
+    // The close dialog (ask.js) and the update check's report (updateview.js) are this mod's
+    // overlays: such a copy draws only its dialog.
+    if (props()?.closeAsk || props()?.updateReport) {
       this.handle = cx.focus_handle();
       this.handle.focus();
       return;
@@ -142,9 +144,9 @@ export default class Tabs extends View {
           else if (c === "glow") this.glow(cx, focused()?.pane);
           // "update-check" / "update-check after": herdr-update-check now, as when Herdr has an
           // update ready / after the restart (updatecheck.js). "update-report before|after": the
-          // last one's report in a tab (a click on its notification).
+          // last one's report in a dialog (a click on its notification).
           else if (c === "update-check" || c === "update-check after") this.checkUpdateNow(c.endsWith("after") ? "after" : "before");
-          else if (c.startsWith("update-report")) this.updateReport(c.slice(13).trim());
+          else if (c.startsWith("update-report")) await this.updateReport(c.slice(13).trim());
           else if (c === "switch" || c === "switch-back") this.switchAgent(c === "switch" ? 1 : -1);
           else if (c === "switch-preview") this.switchAgent(1, true);
           else if (/^tab-[1-9]$/.test(c)) this.goTab(Number(c.slice(4)), cx);
@@ -251,15 +253,12 @@ export default class Tabs extends View {
     if (!this.ended) notify(notice(mode, result, what));
   }
 
-  // The last check's report in a tab of its own, which then stays as a shell. On this computer,
-  // where the check runs: the shown space can be another machine's.
-  updateReport(mode) {
-    const argv = [`${home()}/.local/bin/herdr-update-check`, "--show", mode === "after" ? "after" : "before"];
-    const local = spaces().find((s) => !s.machine);
-    if (local) {
-      run("space.select", { id: local.id });
-      run("tab.new", { space: local.id, name: "Update check", argv });
-    } else run("space.new", { machine: "", argv });
+  // The last check's report, as herdr-update-check saved it, in a dialog (updateview.js).
+  async updateReport(mode) {
+    mode = mode === "after" ? "after" : "before";
+    const text = await readTextFile(`${home()}/.cache/herdr-update-check/report-${mode}.txt`);
+    if (text) openReport(mode, text);
+    else notify({ title: "No update check report yet", timeout: 4000 });
   }
 
   // ---- background sessions
@@ -1205,6 +1204,7 @@ export default class Tabs extends View {
   render(cx) {
     const t = theme();
     if (props()?.closeAsk) return askView(t, props(), terminals(), this, cx);
+    if (props()?.updateReport) return reportView(t, props(), this, cx);
     const space = spaces().find(p => p.active);
     const stop = (_e, cx) => cx.stop_propagation();
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
