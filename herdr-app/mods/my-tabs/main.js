@@ -18,8 +18,8 @@ import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
 // ⌘G's glow (glow.js): how far the halo reaches out from the pane, in px at zoom 1 (the gap between
-// panes is 8), how long it stays, then how long it fades, in ms.
-const GLOW_SIZE = 7, GLOW_HOLD = 380, GLOW_FADE = 480;
+// panes is 8); how long it takes to come in, stays, then takes to fade, in ms.
+const GLOW_SIZE = 7, GLOW_IN = 150, GLOW_HOLD = 300, GLOW_FADE = 300;
 
 // The bar shows one project's tabs (from every space), grouped by directory like the left
 // panel's pills (mods/my-projects; projects.js is a copy of its model). Shared with it: its
@@ -660,9 +660,10 @@ export default class Tabs extends View {
   }
 
   // ⌘G's glow (glow.js; mods/my-glow draws it): a halo around the outside of the pane it lands on,
-  // in the pane's focus color, held a moment and faded out. It shows with the tab, on Herdr's next
-  // frames; a split tab first reads its tree from its machine (about 50 ms). From another app
-  // (Raycast's ⌘G), my-glow holds it until Herdr's window is in front. A press meanwhile replaces it.
+  // in the pane's focus color. It comes in, stays a moment and fades out. It shows with the tab, on
+  // Herdr's next frames; a split tab first reads its tree from its machine (about 50 ms). From
+  // another app (Raycast's ⌘G), my-glow waits for Herdr's window to come to the front. A press
+  // meanwhile replaces it.
   async glow(cx, paneId) {
     const run = (this.glowRun = (this.glowRun ?? 0) + 1);
     try {
@@ -685,12 +686,12 @@ export default class Tabs extends View {
       const frame = box.frame ?? {}, name = frame.focus?.color ?? frame.border?.color ?? "border";
       const color = String(name).startsWith("#") ? name : theme()?.[name] ?? "#6272a4";
       const size = GLOW_SIZE * zoom, radius = (Number(frame.radius) || 0) * zoom;
-      const all = rings(box, { size, radius });
+      const all = rings(box, { size, radius }), start = Date.now();
       for (const s of strips(box, { size, corner: radius + 1, viewport })) {
         // An overlay's size is px at zoom 1, and up to 1 would be a share of the window.
         if (s.w / zoom <= 1 || s.h / zoom <= 1) continue;
         this.glows.push(openOverlay({ mod: "my-glow", kind: "window", frame: "none", at: { x: s.x, y: s.y }, width: s.w / zoom, height: s.h / zoom,
-          props: { rings: all.map((r) => ({ ...r, x: r.x - s.x, y: r.y - s.y })), color, hold: GLOW_HOLD, fade: GLOW_FADE } }));
+          props: { rings: all.map((r) => ({ ...r, x: r.x - s.x, y: r.y - s.y })), color, start, in: GLOW_IN, hold: GLOW_HOLD, fade: GLOW_FADE } }));
       }
     } catch (err) {
       console.log("my-tabs glow", String(err?.stack ?? err));
