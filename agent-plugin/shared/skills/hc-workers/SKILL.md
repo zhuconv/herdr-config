@@ -48,12 +48,12 @@ hc's own manual is `hc --skill`. Where it differs from this skill, this skill wi
 
    ${rules//MANAGER/$me}"
    hc run --bg --on <machine> --cwd <folder> --name <name> --outlive-parent --label worker.manager="$me" \
-     -- claude --permission-mode auto "$task" | jq -r .address
+     -- claude --permission-mode auto -n <name> "$task" | jq -r .address
    # Codex: … -- codex --no-daemon "$task"   (its own session, so Herdr's hook knows its terminal)
    ```
 
    - It prints the worker's address.
-   - `<name>` is short and unique (a-z 0-9 - _). The user finds the worker by it, under your row in Herdr's Agents list.
+   - `<name>` is short and unique (a-z 0-9 - _). The user finds the worker by it, under your row in Herdr's Agents list. `claude -n` makes it the session's name too, the one name Herdr's tabs and lists show; a `/rename` later changes it everywhere. Codex has no such option.
    - `--outlive-parent` keeps the worker running after your session ends. The label lets you list your workers later.
 3. `hc wait <address> --timeout 30`, then `hc read <address>`. Done when the screen shows the worker on the task. Answer a startup dialog, such as folder trust, with `hc keys`.
 4. Tell the user the worker's name and address, then end your turn.

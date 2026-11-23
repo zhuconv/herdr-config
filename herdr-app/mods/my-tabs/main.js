@@ -1039,8 +1039,11 @@ export default class Tabs extends View {
       run("terminal.keep", { terminal, place: "tab" });
       if (!(await this.shown(cx, terminal, true))) return;
       const tab = panes().find((p) => p.terminal === terminal)?.tab;
-      // Herdr names a tab made for a kept terminal after its address ("t44").
-      if (tab) run("tab.rename", { id: tab, name: term.name || "" });
+      // Herdr names a tab made for a kept terminal after its address ("t44"): give it Herdr's own
+      // name, which follows the agent's session name (one name: a /rename shows in the tab and
+      // the Agents list; a fixed name here would hide it). A worker started by hc-workers has its
+      // hc name as its session name (claude -n).
+      if (tab) run("tab.rename", { id: tab, name: "" });
       run("pane.focus", { terminal });
       for (const id of shells) if (id !== tab) run("tab.close", { id, confirmed: true });
       if (tab) this.placeKept(tab);
