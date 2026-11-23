@@ -19,7 +19,8 @@ const TABLE = JSON.stringify({
   ],
 })
 
-type Saved = { number: number; email: string; organizationUuid?: string; alias?: string; usageStatus?: string }
+/** A slot cswap keeps; creds names the login it holds ('dead' for one past its refresh). */
+type Saved = { number: number; email: string; organizationUuid?: string; alias?: string; usageStatus?: string; creds?: string }
 const login = (email: string, org?: string) => JSON.stringify({ oauthAccount: { emailAddress: email, organizationUuid: org } })
 
 /** A machine: its files, its login and a session's own, what cswap has saved,
@@ -36,9 +37,18 @@ class Machine {
   configDir: string | undefined = undefined
   /** where cswap is: on PATH, only in ~/.local/bin, or nowhere */
   cswapAt: 'path' | 'local' | 'none' = 'path'
+  /** the login token the machine holds: one name per sign-in */
+  liveCreds = 'login-0'
+  private signIns = 0
 
   constructor(email: string | null, org?: string) {
     if (email) this.files[`${HOME}/.claude.json`] = login(email, org)
+  }
+
+  /** `claude auth login`: a new login replaces the machine's, and nothing keeps the old one. */
+  signIn(email: string, org?: string) {
+    this.files[`${HOME}/.claude.json`] = login(email, org)
+    this.liveCreds = `login-${++this.signIns}`
   }
 
   /** Starts this session with a login of its own, as `cswap run` does. */
@@ -57,18 +67,41 @@ class Machine {
   cswap(args: readonly string[]) {
     const done = (exitCode: number, stdout: string, stderr = '') => ({ exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false })
     const ok = (stdout = '') => done(0, stdout)
-    if (args[0] === 'list') return ok(JSON.stringify({ schemaVersion: 1, accounts: this.saved }))
+    const live = this.live()
+    const isLive = (s: Saved) => !!live && s.email.toLowerCase() === live.email.toLowerCase() && (s.organizationUuid ?? null) === (live.org ?? null)
+    if (args[0] === 'list') {
+      // As cswap does: the live account's state comes from the machine's own login, the others' from their slots.
+      const accounts = this.saved.map(s => {
+        const shown: Saved = { ...s }
+        delete shown.creds
+        return isLive(s) ? { ...shown, active: true, usageStatus: this.liveCreds === 'dead' ? 'relogin_required' : 'ok' } : shown
+      })
+      return ok(JSON.stringify({ schemaVersion: 1, accounts }))
+    }
     if (args[0] === 'add') {
-      const live = this.live()
+      // As cswap does: an account it has gets its slot updated in place; a new one gets a slot.
       if (!live) return done(1, '', 'no live login')
-      this.saved = this.saved.filter(s => s.email.toLowerCase() !== live.email.toLowerCase())
-      this.saved.push({ number: this.saved.length + 1, email: live.email, organizationUuid: live.org })
+      const slot = this.saved.find(isLive)
+      if (slot) {
+        slot.creds = this.liveCreds
+        delete slot.usageStatus
+        return ok(`Updated credentials for Account ${slot.number}`)
+      }
+      const number = Math.max(0, ...this.saved.map(s => s.number)) + 1
+      this.saved.push({ number, email: live.email, organizationUuid: live.org, creds: this.liveCreds })
       return ok('added')
     }
     if (args[0] === 'switch') {
       const s = this.saved.find(x => String(x.number) === args[1])
       if (!s) return done(1, '', 'no such account')
+      // As cswap does: the login it leaves goes into that account's slot first, when it has one.
+      const leaving = this.saved.find(isLive)
+      if (leaving) {
+        leaving.creds = this.liveCreds
+        delete leaving.usageStatus
+      }
       this.files[`${HOME}/.claude.json`] = login(s.email, s.organizationUuid)
+      this.liveCreds = s.creds ?? `slot-${s.number}`
       return ok(`switched to ${s.email}`)
     }
     return done(2, '', 'unknown')
@@ -167,6 +200,7 @@ test('/auth alone lists the accounts and their state', async ($, on) => {
   expect(text).toMatch(/gt\s+gt@example\.com\s+ready/)
   expect(text).toMatch(/jian\s+jian@example\.com\s+current, not saved in cswap yet/)
   expect(text).toMatch(/sr\s+no email in the account table/)
+  expect(text).toContain('run ~/.claude/mods/accounts/signin in a terminal')
   expect(m.runs).toEqual([['list', '--json']])
 })
 
@@ -202,6 +236,7 @@ test('/auth from a cswap run session switches the machine and says the session s
   const listed = (await $.command.run(typed(''))).text
   expect(listed).toContain('(now gt)')
   expect(listed).toContain('so it stays on ut')
+  expect(listed).not.toContain('signin')
   const { text } = await $.command.run(typed('jian'))
   expect(text).toContain('Switched this machine to jian')
   expect(text).toContain('so it stays on ut')
@@ -231,14 +266,39 @@ test('/auth to an expired or missing login says how to sign in', async ($, on) =
   expect(expiredText).toContain('claude auth login --email ut@example.com')
   const missing = (await $.command.run(typed('jian'))).text
   expect(missing).toContain("isn't saved on this machine yet")
-  expect(m.runs.some(r => r[0] === 'switch')).toBe(false)
+  // Each time, the current login is saved again first: the sign-in writes over it.
+  expect(changes(m)).toEqual([['add'], ['add']])
 })
 
-test('/auth to the current account or an unknown one changes nothing', async ($, on) => {
+test('/auth keeps each new sign-in, so signing in to the next account cannot lose it', async ($, on) => {
+  // ut and gt were saved long ago and have expired; the machine is on jian, which cswap doesn't have.
+  const m = new Machine('jian@example.com')
+  m.saved = [
+    { number: 1, email: 'ut@example.com', organizationUuid: UT_ORG, usageStatus: 'relogin_required', creds: 'dead' },
+    { number: 2, email: 'gt@example.com', usageStatus: 'relogin_required', creds: 'dead' },
+  ]
+  m.engine(on)
+  expect((await $.command.run(typed('ut'))).text).toContain('claude auth login --email ut@example.com')
+  m.signIn('ut@example.com', UT_ORG)
+  const ut = m.liveCreds
+  const saved = (await $.command.run(typed('ut'))).text
+  expect(saved).toContain('Already on ut')
+  expect(saved).toContain('Saved this login in cswap')
+  expect((await $.command.run(typed('gt'))).text).toContain('claude auth login --email gt@example.com')
+  m.signIn('gt@example.com')
+  await $.command.run(typed('gt'))
+  expect((await $.command.run(typed('ut'))).text).toContain('Switched this machine to ut')
+  expect(m.liveCreds).toBe(ut)
+  expect((await $.command.run(typed('jian'))).text).toContain('Switched this machine to jian')
+  expect(m.liveCreds).toBe('login-0')
+})
+
+test('/auth to the current account saves its login again; to an unknown one changes nothing', async ($, on) => {
   const m = new Machine('gt@example.com')
   m.saved = [{ number: 1, email: 'gt@example.com' }]
   m.engine(on)
   expect((await $.command.run(typed('GT'))).text).toContain('Already on gt')
   expect((await $.command.run(typed('nobody'))).text).toContain('no account "nobody"')
-  expect(changes(m)).toEqual([])
+  expect(changes(m)).toEqual([['add']])
+  expect(m.live()?.email).toBe('gt@example.com')
 })

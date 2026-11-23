@@ -1,0 +1,264 @@
+#!/usr/bin/env python3
+"""Signs this machine in to the Claude accounts it has no working login for,
+one after another, and saves each in cswap, so /auth can switch to them.
+
+    ~/.claude/mods/accounts/signin [alias ...]
+
+Without aliases it takes each account in ~/.config/claude-accounts/accounts.json
+that cswap has no working login for here; with aliases, just those. For each it
+runs `claude auth login --email <email>`: open the link (it opens in that
+account's container in Zen, or its Chrome profile), click Authorize, and on a
+server paste the code the page shows. `cswap add` then saves the login. At the
+end the machine goes back to the account it was on.
+
+Each sign-in writes over the machine's login and keeps no copy of it, so the
+current login is saved first, and each new one before the next sign-in.
+"""
+import json
+import os
+import socket
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+TABLE = os.path.join(HOME, ".config", "claude-accounts", "accounts.json")
+# cswap and claude act on the machine's login, even from a `cswap run` shell (as /auth does).
+ENV = {k: v for k, v in os.environ.items() if k not in ("CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR")}
+# cswap's states for a saved login that needs a new sign-in.
+DEAD = ("relogin_required", "no_credentials")
+
+
+class Stop(Exception):
+    pass
+
+
+def find(name):
+    """A program on PATH, else in ~/.local/bin, where the installers put claude and cswap."""
+    for d in os.environ.get("PATH", "").split(os.pathsep) + [os.path.join(HOME, ".local", "bin")]:
+        path = os.path.join(d, name)
+        if d and os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    return None
+
+
+def read_json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def table():
+    """The account table's entries, emails and organizations lowercased."""
+    raw = read_json(TABLE)
+    items = raw.get("accounts") if isinstance(raw, dict) else raw
+    out = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict) or not isinstance(item.get("alias"), str) or not item["alias"].strip():
+            continue
+        email, org = item.get("email"), item.get("org")
+        out.append({
+            "alias": item["alias"].strip(),
+            "email": email.strip().lower() if isinstance(email, str) and "@" in email else None,
+            "org": org.strip().lower() if isinstance(org, str) and org.strip() else None,
+            "chrome": item.get("chrome") if isinstance(item.get("chrome"), str) else None,
+        })
+    return out
+
+
+def live():
+    """The machine's login, found as Claude Code and cswap find it: ~/.claude/.config.json
+    when there (an old layout), else ~/.claude.json."""
+    config = read_json(os.path.join(HOME, ".claude", ".config.json"))
+    if config is None:
+        config = read_json(os.path.join(HOME, ".claude.json"))
+    account = config.get("oauthAccount") if isinstance(config, dict) else None
+    if not isinstance(account, dict) or not isinstance(account.get("emailAddress"), str):
+        return None
+    org = account.get("organizationUuid")
+    return {"email": account["emailAddress"].lower(), "org": org.lower() if isinstance(org, str) and org else None}
+
+
+def is_login_of(entry, login):
+    """Whether a login is this entry's: its email, and its organization where both name one."""
+    return bool(login) and login["email"] == entry["email"] and (
+        not entry["org"] or not login["org"] or entry["org"] == login["org"])
+
+
+def alias_of(accounts, login):
+    mine = [a for a in accounts if a["email"] == login["email"]]
+    hit = next((a for a in mine if a["org"] and a["org"] == login["org"]), None) or next(
+        (a for a in mine if not a["org"] or not login["org"]), None)
+    return hit["alias"] if hit else None
+
+
+def name_of(accounts, login):
+    return (alias_of(accounts, login) or login["email"]) if login else "no login"
+
+
+def cswap(*args):
+    r = subprocess.run([CSWAP] + list(args), env=ENV, stdin=subprocess.DEVNULL,
+                       stdout=subprocess.PIPE, stderr=subprocess.PIPE, universal_newlines=True)
+    return r.returncode, r.stdout or "", r.stderr or ""
+
+
+def saved():
+    code, out, err = cswap("list", "--json")
+    if code != 0:
+        raise Stop("cswap list failed: " + (err or out).strip()[:300])
+    try:
+        return json.loads(out[out.index("{"):out.rindex("}") + 1]).get("accounts") or []
+    except ValueError:
+        raise Stop("cswap list printed no JSON: " + (err or out).strip()[:300])
+
+
+def slot_for(slots, entry):
+    for s in slots:
+        org = (s.get("organizationUuid") or "").lower() or None
+        if (s.get("email") or "").lower() == entry["email"] and (not entry["org"] or not org or org == entry["org"]):
+            return s
+    return None
+
+
+def save(what):
+    """cswap add: saves the machine's login, or updates cswap's copy of it."""
+    code, out, err = cswap("add")
+    if code != 0:
+        raise Stop("cswap couldn't save %s: %s" % (what, (err or out).strip()[:300]))
+
+
+def on_vista_login_node(fqdn, system=None):
+    """Vista's login nodes can't run Claude; its compute nodes, and Horizon's login nodes, can."""
+    return fqdn.split(".")[0].startswith("login") and (fqdn.endswith(".vista.tacc.utexas.edu") or system == "vista")
+
+
+def where(entry):
+    return "%s's Chrome profile (%s)" % (entry["alias"], entry["chrome"]) if entry["chrome"] else \
+        "%s's container in Zen" % entry["alias"]
+
+
+def me():
+    path = os.path.abspath(sys.argv[0])
+    return "~" + path[len(HOME):] if path.startswith(HOME + os.sep) else path
+
+
+def listing(accounts, slots, login):
+    current = alias_of(accounts, login) if login else None
+    lines = []
+    for a in accounts:
+        s = slot_for(slots, a) if a["email"] else None
+        if current and a["alias"] == current:
+            state = "current" if s else "current, not saved in cswap"
+        elif not a["email"]:
+            state = "no email in the account table"
+        elif not s:
+            state = "not signed in here"
+        elif s.get("usageStatus") in DEAD:
+            state = "login expired"
+        else:
+            state = "ready"
+        lines.append("  %-8s %s" % (a["alias"], state))
+    return "\n".join(lines)
+
+
+def main(argv):
+    global CSWAP, CLAUDE
+    if argv[:1] in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return 0
+    if on_vista_login_node(socket.getfqdn(), os.environ.get("TACC_SYSTEM")):
+        print("Claude can't run on Vista's login nodes: run this in an idev session on a compute node.")
+        return 1
+    CSWAP, CLAUDE = find("cswap"), find("claude")
+    if not CSWAP:
+        print("cswap isn't installed here (uv tool install claude-swap).")
+        return 1
+    if not CLAUDE:
+        print("claude isn't installed here.")
+        return 1
+    accounts = table()
+    if not accounts:
+        print("No accounts in %s." % TABLE)
+        return 1
+    known = {a["alias"].lower(): a for a in accounts}
+    unknown = [w for w in argv if w.lower() not in known]
+    if unknown:
+        print("No account %s. Accounts: %s." % (", ".join(unknown), ", ".join(a["alias"] for a in accounts)))
+        return 1
+
+    start = live()
+    done, notes, problems = [], [], []
+    try:
+        try:
+            if start:
+                save("the current login (%s)" % name_of(accounts, start))
+            slots = saved()
+            todo = []
+            for a in ([known[w.lower()] for w in argv] if argv else accounts):
+                if not a["email"]:
+                    notes.append("%s has no email in the account table." % a["alias"])
+                elif is_login_of(a, start):
+                    if argv:
+                        notes.append("This machine is on %s already." % a["alias"])
+                else:
+                    s = slot_for(slots, a)
+                    if argv or not s or s.get("usageStatus") in DEAD:
+                        todo.append(a)
+            if not todo:
+                print("Nothing to sign in to here.")
+            for i, a in enumerate(todo, 1):
+                print("\n[%d/%d] %s, %s" % (i, len(todo), a["alias"], a["email"]))
+                if sys.platform == "darwin":
+                    print("Its sign-in page opens in %s: click Authorize." % where(a))
+                else:
+                    print("Open the link it prints (it opens in %s), click Authorize, and paste the code "
+                          "the page shows here." % where(a))
+                sys.stdout.flush()
+                code = subprocess.call([CLAUDE, "auth", "login", "--email", a["email"]], env=ENV)
+                now = live()
+                if now:
+                    # Whatever login landed, keep it before anything writes over it.
+                    save("the login now on this machine (%s)" % name_of(accounts, now))
+                if code != 0:
+                    raise Stop("Signing in to %s didn't finish." % a["alias"])
+                if not is_login_of(a, now):
+                    problems.append("%s: the sign-in gave %s's login. Sign %s in to %s, then run: %s %s" % (
+                        a["alias"], name_of(accounts, now), where(a), a["alias"], me(), a["alias"]))
+                    continue
+                done.append(a["alias"])
+                print("Saved %s in cswap." % a["alias"])
+        except KeyboardInterrupt:
+            raise Stop("Stopped.")
+    except Stop as stop:
+        problems.append(str(stop))
+    finally:
+        # Back to the account the machine was on (its login is saved: it was the first step).
+        now = live()
+        if start and not (now and now["email"] == start["email"] and now["org"] == start["org"]):
+            try:
+                s = slot_for(saved(), {"email": start["email"], "org": start["org"]})
+                code, out, err = cswap("switch", str(s["number"])) if s else (1, "", "it isn't saved in cswap")
+                if code != 0:
+                    problems.append("Couldn't switch back to %s: %s" % (name_of(accounts, start), (err or out).strip()[:300]))
+            except Stop as stop:
+                problems.append(str(stop))
+
+    print()
+    if done:
+        print("Signed in and saved: %s." % ", ".join(done))
+    for n in notes:
+        print(n)
+    for p in problems:
+        print("Not done: %s" % p)
+    try:
+        login = live()
+        print("This machine is on %s. Accounts here:" % name_of(accounts, login))
+        print(listing(accounts, saved(), login))
+    except Stop as stop:
+        print(str(stop))
+    return 1 if problems else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

@@ -10,6 +10,10 @@
 // - /auth <alias> switches this machine's Claude login to that account with
 //   cswap (claude-swap). /auth alone lists the accounts. A login cswap hasn't
 //   saved yet is saved first: a switch would otherwise write over it.
+//   For an account with no working login saved, /auth gives the steps to sign
+//   in, and /auth to it afterwards saves the new login (`cswap add` updates an
+//   account's slot in place). Signing in writes over the machine's login
+//   without keeping a copy, so /auth updates cswap's copy of it first.
 //
 // The account table is ~/.config/claude-accounts/accounts.json, the file the
 // Zen mod reads: {"accounts": [{"alias": "gt", "email": "...", "org": "..."}]}.
@@ -164,6 +168,7 @@ export function listing(accounts: Entry[], saved: Saved[], live: Live | null): s
   const current = live && aliasOf(accounts, live)
   const lines = [`Claude accounts on this machine${current ? ` (now ${current})` : live ? ` (now ${live.email})` : ''}:`]
   const width = Math.max(4, ...accounts.map(a => a.alias.length))
+  let unsigned = 0
   for (const a of accounts) {
     const s = a.email ? savedFor(saved, a.email, a.org) : null
     const isLive = !!live && a.alias === current
@@ -178,11 +183,15 @@ export function listing(accounts: Entry[], saved: Saved[], live: Live | null): s
           : expired(s)
             ? 'login expired'
             : 'ready'
+    if (state === 'not signed in on this machine' || state === 'login expired') unsigned++
     lines.push(`  ${a.alias.padEnd(width)}  ${(a.email ?? '').padEnd(28)}  ${state}`)
   }
   const extra = saved.filter(s => !accounts.some(a => a.email && s.email?.toLowerCase() === a.email))
   for (const s of extra) {
     lines.push(`  ${(s.alias ?? `#${s.number}`).padEnd(width)}  ${(s.email ?? '').padEnd(28)}  saved in cswap, not in the account table`)
+  }
+  if (unsigned) {
+    lines.push('To sign in to each account not signed in here or expired, one after another, run ~/.claude/mods/accounts/signin in a terminal on this machine.')
   }
   lines.push('/auth <alias> switches this machine to that account.')
   return lines.join('\n')
@@ -225,16 +234,22 @@ async function auth($: EngineInterface, wanted: string): Promise<{ text: string;
     return { text: `/auth: no account "${wanted}". Accounts: ${known}.` }
   }
   const lines: string[] = []
-
-  // A switch writes over a login cswap hasn't saved: save it first.
-  if (live && !savedFor(saved, live.email, live.org)) {
+  const current = live ? (aliasOf(accounts, live) ?? live.email) : null
+  /** `cswap add`: saves the machine's login, or updates cswap's copy of it. Null when it worked. */
+  const saveLive = async () => {
     const add = await cswap($, ['add'])
     saved = await savedAccounts($)
-    if (add.exitCode !== 0 || !savedFor(saved, live.email, live.org)) {
-      const why = (add.stderr || add.stdout).trim().slice(0, 300)
-      return { text: `Not switching: the current login (${live.email}) isn't saved in cswap, and \`cswap add\` failed${why ? `: ${why}` : ''}.` }
+    return add.exitCode === 0 ? null : (add.stderr || add.stdout).trim().slice(0, 300) || `exit ${add.exitCode}`
+  }
+
+  // A switch writes over a login cswap doesn't have: save it first.
+  const liveWasSaved = !!live && !!savedFor(saved, live.email, live.org)
+  if (live && !liveWasSaved) {
+    const failed = await saveLive()
+    if (failed !== null || !savedFor(saved, live.email, live.org)) {
+      return { text: `Not switching: the current login (${live.email}) isn't saved in cswap, and \`cswap add\` failed${failed ? `: ${failed}` : ''}.` }
     }
-    lines.push(`Saved the current login (${aliasOf(accounts, live) ?? live.email}) in cswap first, so you can switch back.`)
+    lines.push(`Saved the current login (${current}) in cswap first, so you can switch back.`)
   }
 
   const target = entry?.email
@@ -244,9 +259,27 @@ async function auth($: EngineInterface, wanted: string): Promise<{ text: string;
   const name = entry?.alias ?? wanted
 
   if (email && same(live, { email, org: entry?.org ?? null })) {
-    return { text: [...lines, `Already on ${name} (${email}).`].join('\n') }
+    // The step after a sign-in: it puts the new login in cswap, over the expired copy there.
+    if (!liveWasSaved) return { text: [...lines, `Already on ${name} (${email}).`].join('\n') }
+    const failed = await saveLive()
+    return {
+      text: [
+        ...lines,
+        failed === null
+          ? `Already on ${name} (${email}). Saved this login in cswap, so you can switch back to it.`
+          : `Already on ${name} (${email}), but \`cswap add\` couldn't save this login: ${failed}`,
+      ].join('\n'),
+    }
   }
   if (!target || expired(target)) {
+    // Signing in writes over the machine's login and, unlike a switch, keeps no copy of it. cswap's
+    // copy can be older than the login (an expired one, before the last sign-in): update it first.
+    if (liveWasSaved) {
+      const failed = await saveLive()
+      if (failed !== null) {
+        lines.push(`Couldn't save the current login (${current}) in cswap first (\`cswap add\`: ${failed}). Signing in to ${name} replaces it.`)
+      }
+    }
     const why = target ? 'saved on this machine has expired' : "isn't saved on this machine yet"
     return { text: [...lines, signInSteps(name, email, why)].join('\n') }
   }
