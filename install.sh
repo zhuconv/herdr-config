@@ -15,9 +15,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 # Codex in Herdr's terminals runs its sessions itself (--no-daemon), so the hook knows their
-# terminal: the codex shell function in agent-note-hook/codex.sh, loaded by this line in ~/.bashrc and
+# terminal: the codex shell function in agent-plugin/codex/codex.sh, loaded by this line in ~/.bashrc and
 # ~/.zshrc (each one there, and the login shell's even if not yet; added once, after a copy).
-RC_LINE='if [ -f "$HOME/.local/share/agent-note/codex.sh" ]; then . "$HOME/.local/share/agent-note/codex.sh"; fi  # agent-note: Codex in Herdr terminals (herdr-config agent-note-hook/codex.sh)'
+RC_LINE='if [ -f "$HOME/.local/share/agent-note/codex.sh" ]; then . "$HOME/.local/share/agent-note/codex.sh"; fi  # agent-note: Codex in Herdr terminals (herdr-config agent-plugin/codex/codex.sh)'
 ADD_RC='for f in "$HOME/.bashrc" "$HOME/.zshrc"; do
   case $f in */."${SHELL##*/}"rc) ;; *) [ -f "$f" ] || continue ;; esac
   grep -qsF share/agent-note/codex.sh "$f" && continue
@@ -39,20 +39,20 @@ trust_on() { # machine
 
 if [ "${1:-}" = "--remote" ]; then
   m=${2:?usage: ./install.sh --remote <machine>}
-  hc file write --on "$m" .local/bin/agent-note <agent-note-hook/agent-note >/dev/null
+  hc file write --on "$m" .local/bin/agent-note <agent-plugin/shared/agent-note >/dev/null
   hc exec --on "$m" -- chmod +x .local/bin/agent-note
-  hc exec --on "$m" -i -- python3 - <agent-note-hook/add-to-claude.py
-  hc exec --on "$m" -i -- python3 - <agent-note-hook/add-to-codex.py
+  hc exec --on "$m" -i -- python3 - <agent-plugin/claude/add-agent-note.py
+  hc exec --on "$m" -i -- python3 - <agent-plugin/codex/add-agent-note.py
   hc exec --on "$m" -- mkdir -p .local/share/agent-note
-  hc file write --on "$m" .local/share/agent-note/codex.sh <agent-note-hook/codex.sh >/dev/null
-  hc file write --on "$m" .local/bin/codex-hooks-trust <agent-note-hook/codex-hooks-trust >/dev/null
+  hc file write --on "$m" .local/share/agent-note/codex.sh <agent-plugin/codex/codex.sh >/dev/null
+  hc file write --on "$m" .local/bin/codex-hooks-trust <agent-plugin/codex/codex-hooks-trust >/dev/null
   hc exec --on "$m" -- chmod +x .local/bin/codex-hooks-trust
   hc exec --on "$m" -- sh -c "$ADD_RC" sh "$RC_LINE"
   trust_on "$m"
   # The skills as on a Mac (see below): one copy in ~/.agents/skills, a link in ~/.claude/skills.
   for s in hc-workers hc-find; do
     hc exec --on "$m" -- rm -rf ".agents/skills/$s"
-    for f in "skills/$s"/*; do
+    for f in "agent-plugin/shared/skills/$s"/*; do
       hc file write --on "$m" ".agents/skills/$s/${f##*/}" <"$f" >/dev/null
     done
     hc exec --on "$m" -- sh -c 'd=$HOME/.claude/skills/$1; mkdir -p "${d%/*}"
@@ -61,10 +61,10 @@ if [ "${1:-}" = "--remote" ]; then
   done
   # Claude Code's mods in ~/.claude/mods, loaded by new sessions: the short command names, and
   # accounts (/auth, and the account tag on artifact links).
-  (cd claude-mods && find short-names accounts -type f ! -name .DS_Store ! -name tsconfig.json ! -path '*/.claude-plugin/types/*') | while read -r f; do
-    hc file write --on "$m" ".claude/mods/$f" <"claude-mods/$f" >/dev/null
+  (cd agent-plugin/claude/mods && find short-names accounts -type f ! -name .DS_Store ! -name tsconfig.json ! -path '*/.claude-plugin/types/*') | while read -r f; do
+    hc file write --on "$m" ".claude/mods/$f" <"agent-plugin/claude/mods/$f" >/dev/null
   done
-  hc exec --on "$m" -i -- python3 - <claude-mods/add-to-claude.py
+  hc exec --on "$m" -i -- python3 - <agent-plugin/claude/add-mods.py
   # The accounts mod's table of aliases and emails, readable by its owner only.
   table="$HOME/.config/claude-accounts/accounts.json"
   if [ -f "$table" ]; then
@@ -113,11 +113,11 @@ link_skill hc-find
 
 # Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart, PreCompact and
 # PermissionRequest (added once, never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
-python3 agent-note-hook/add-to-claude.py
-python3 agent-note-hook/add-to-codex.py
-# Claude Code's mods (claude-mods/short-names and claude-mods/accounts, put in ~/.claude/mods by
+python3 agent-plugin/claude/add-agent-note.py
+python3 agent-plugin/codex/add-agent-note.py
+# Claude Code's mods (agent-plugin/claude/mods/short-names and accounts, put in ~/.claude/mods by
 # paths.sh): every new session loads them.
-python3 claude-mods/add-to-claude.py
+python3 agent-plugin/claude/add-mods.py
 # Codex in Herdr's terminals runs --no-daemon (see RC_LINE above), and Codex is asked whether it
 # trusts the hooks, which are then trusted with its own hashes if not.
 sh -c "$ADD_RC" sh "$RC_LINE"

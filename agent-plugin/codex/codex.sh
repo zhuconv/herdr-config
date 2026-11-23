@@ -1,4 +1,4 @@
-# agent-note's codex wrapper, for bash and zsh (herdr-config agent-note-hook/codex.sh). install.sh copies it
+# agent-note's codex wrapper, for bash and zsh (herdr-config agent-plugin/codex/codex.sh). install.sh copies it
 # to ~/.local/share/agent-note/codex.sh and loads it from ~/.bashrc and ~/.zshrc.
 #
 # In a Herdr terminal (hc's: $HC_TERMINAL_ID is set), a Codex you start runs its session itself

@@ -4,7 +4,7 @@ trusts again any it doesn't, as Codex's own "Trust all" would.
 
 Codex runs a hook only once it's trusted: config.toml's [hooks.state."<key>"] trusted_hash, a
 hash Codex makes of the hook's definition. Until then every Codex start waits at "Hooks need
-review", and a Codex that a relay or a manager starts has no one to answer it. add-to-codex.py
+review", and a Codex that a relay or a manager starts has no one to answer it. add-agent-note.py
 writes the hashes Codex 0.169 gives, but another Codex may hash differently, and the key counts
 positions in hooks.json. So this asks Codex itself: `codex app-server`'s hooks/list gives each
 hook's trust status and the hash Codex makes of it now. Each agent-note hook (the command
@@ -12,7 +12,7 @@ hook's trust status and the hash Codex makes of it now. Each agent-note hook (th
 hash written, and Codex is asked again; if it can't read the file after that, the file goes back
 as it was. Other hooks are only counted.
 
-install.sh runs it after adding the hooks, and the codex shell function (agent-note-hook/codex.sh) once
+install.sh runs it after adding the hooks, and the codex shell function (agent-plugin/codex/codex.sh) once
 after the codex program changes. It starts no session and sends no prompt. Not on a Vista login
 node, where Codex mustn't run: on a compute node there, which has the same home.
 

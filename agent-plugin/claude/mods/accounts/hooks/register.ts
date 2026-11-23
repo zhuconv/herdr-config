@@ -3,7 +3,7 @@
 //
 // - Each artifact link a session publishes gets the account's tag:
 //   https://claude.ai/artifact/<id>#acct=<alias>. The Zen mod in
-//   zen-config-monorepo (zen-claude-accounts) opens a tagged link in that
+//   zen-config-monorepo (multi-cc-switcher) opens a tagged link in that
 //   account's container, signed in as the account that published it. The
 //   tagged link shows as a line under the call, and the model is told to give
 //   that one.
