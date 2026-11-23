@@ -2,7 +2,7 @@ import { View, div, svg, image } from "gpui-kit";
 import { h_flex } from "gpui-base";
 import { spaces, panes, run, openOverlay, theme, window, shared, layout, settings,
   terminals, focused, machines, hc, exec, notify, nextCommand, agents, setShared, home,
-  watchFolder, readTextFile, writeTextFile, checking, playSound, props, closeOverlay } from "herdr";
+  watchFolder, readTextFile, writeTextFile, checking, playSound, props, closeOverlay, updates } from "herdr";
 import { readdir } from "fs/promises";
 import { Reopener } from "./reopen.js";
 import { childrenOf, askClose, askView } from "./ask.js";
@@ -14,6 +14,7 @@ import { Recent } from "./recent.js";
 import { openPeek } from "./peek.js";
 import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf, starters, LOCAL_KEY } from "./projects.js";
 import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
+import { CHECK_EVERY, readyKey, installedKey, about, notice } from "./updatecheck.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
 const SWITCH = "my-tabs.switcher";
@@ -139,6 +140,11 @@ export default class Tabs extends View {
           else if (c === "waiting" || c === "waiting away") this.goWaiting(cx, c === "waiting away");
           // "glow": the focused pane's halo, as after ⌘G.
           else if (c === "glow") this.glow(cx, focused()?.pane);
+          // "update-check" / "update-check after": herdr-update-check now, as when Herdr has an
+          // update ready / after the restart (updatecheck.js). "update-report before|after": the
+          // last one's report in a tab (a click on its notification).
+          else if (c === "update-check" || c === "update-check after") this.checkUpdateNow(c.endsWith("after") ? "after" : "before");
+          else if (c.startsWith("update-report")) this.updateReport(c.slice(13).trim());
           else if (c === "switch" || c === "switch-back") this.switchAgent(c === "switch" ? 1 : -1);
           else if (c === "switch-preview") this.switchAgent(1, true);
           else if (/^tab-[1-9]$/.test(c)) this.goTab(Number(c.slice(4)), cx);
@@ -189,6 +195,71 @@ export default class Tabs extends View {
     // Herdr doesn't redraw the bar while its window isn't in front, so then another machine's
     // labels are looked at every 2 s, in Herdr's own list of terminals: nothing goes over the network.
     this.remoteTimer = cx.timer.every(2000, () => { if (this.remote.size && !window()?.active) this.readRemote(); });
+    // my-tabs: when Herdr has an update ready, herdr-update-check runs by itself and a
+    // notification says whether restarting is safe for this setup; after the restart it checks
+    // again (updatecheck.js). Not while `herdr-app check` loads this mod: the check after a
+    // restart runs that on every mod, this one included.
+    if (!checking()) {
+      this.updateWatch = { busy: false, checked: localStorage.getItem("update.checked"), installed: localStorage.getItem("update.installed") };
+      cx.timer.after(20000, () => this.pollUpdates());
+      this.updateTimer = cx.timer.every(CHECK_EVERY, () => this.pollUpdates());
+    }
+  }
+
+  // ---- Herdr's updates (updatecheck.js)
+
+  // What's waiting and what's installed, from Herdr: a new update ready is checked once, and so is
+  // a new version once it's installed (and the core is done updating).
+  pollUpdates() {
+    const w = this.updateWatch;
+    if (!w || w.busy || this.ended) return;
+    let u;
+    try { u = updates(); } catch { return; }
+    const installed = installedKey(u);
+    if (installed && installed !== w.installed) {
+      const before = w.installed;
+      w.installed = installed;
+      localStorage.setItem("update.installed", installed);
+      if (before) return void this.runUpdateCheck("after", about("after", u, before));
+    }
+    const ready = readyKey(u);
+    if (ready && ready !== w.checked) {
+      w.checked = ready;
+      localStorage.setItem("update.checked", ready);
+      this.runUpdateCheck("before", about("before", u));
+    }
+  }
+
+  checkUpdateNow(mode) {
+    if (!this.updateWatch || this.updateWatch.busy) return;
+    let u = null;
+    try { u = updates(); } catch {}
+    this.runUpdateCheck(mode, about(mode, u));
+  }
+
+  async runUpdateCheck(mode, what) {
+    const w = this.updateWatch;
+    w.busy = true;
+    let result;
+    try {
+      result = await exec(`${home()}/.local/bin/herdr-update-check`, mode === "after" ? ["--after"] : [], { timeout: 300000 });
+    } catch (err) {
+      result = { code: -1, stdout: "", stderr: String(err?.message ?? err) };
+    } finally {
+      w.busy = false;
+    }
+    if (!this.ended) notify(notice(mode, result, what));
+  }
+
+  // The last check's report in a tab of its own, which then stays as a shell. On this computer,
+  // where the check runs: the shown space can be another machine's.
+  updateReport(mode) {
+    const argv = [`${home()}/.local/bin/herdr-update-check`, "--show", mode === "after" ? "after" : "before"];
+    const local = spaces().find((s) => !s.machine);
+    if (local) {
+      run("space.select", { id: local.id });
+      run("tab.new", { space: local.id, name: "Update check", argv });
+    } else run("space.new", { machine: "", argv });
   }
 
   // ---- background sessions

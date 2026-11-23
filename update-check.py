@@ -5,6 +5,11 @@
 #   herdr-update-check                    before: Herdr's update pill is showing
 #   herdr-update-check --after            after the restart
 #   herdr-update-check --from A --to B    compare two Herdr releases
+#   herdr-update-check --show before      the last report (after: the last --after one)
+#
+# The tab bar (mods/my-tabs, updatecheck.js) runs the first two by itself, when Herdr has an
+# update ready and once it's installed, and says what they found in a notification; a click on
+# it opens the report (--show) in a tab.
 #
 # An update never overwrites our files: Herdr rewrites only its own mods and layouts, and moves one
 # that was edited aside first (`<name>-edited`). What it doesn't promise is that our mods keep
@@ -30,6 +35,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # herdr-core pull requests our machines' builds carry before a release has them. Once a release
@@ -43,6 +49,10 @@ CACHE = HOME / ".cache" / "herdr-update-check"
 SRC = CACHE / "herdr-app.git"
 SNAP = CACHE / "before"
 REPO = Path(os.path.realpath(__file__)).parent
+# Run from Herdr (my-tabs runs it when an update is ready), the PATH may lack these.
+for extra in (HOME / ".local/bin", Path("/opt/homebrew/bin"), Path("/usr/local/bin")):
+    if extra.is_dir() and str(extra) not in os.environ.get("PATH", "").split(os.pathsep):
+        os.environ["PATH"] = os.environ.get("PATH", "") + os.pathsep + str(extra)
 
 # Where our code leans on Herdr's own code (paths in Herdr's source).
 API = "defaults/herdr.d.ts"
@@ -57,8 +67,8 @@ WORST = 0
 
 def say(level, text, more=()):
     global WORST
-    WORST = max(WORST, {"ok": 0, "note": 0, "check": 1, "stop": 2}[level])
-    print(f"  {level.upper() if level in ('check', 'stop') else level:<5}  {text}")
+    WORST = max(WORST, {"ok": 0, "note": 0, "warn": 0, "check": 1, "stop": 2}[level])
+    print(f"  {level.upper() if level in ('warn', 'check', 'stop') else level:<5}  {text}")
     more = list(more)
     for line in more[:8]:
         print(f"         {line[:160]}")
@@ -420,8 +430,8 @@ def machines_section(mac, ms, core_latest, core_min=None):
     elif released:
         say("note", f"older than this Mac's {mac}: {', '.join(older)}. Settings → Machines offers Update for them, and that's fine now")
     else:
-        say("note", f"older than this Mac's {mac}: {', '.join(older)}. Settings → Machines will offer Update for them:",
-            ["don't use it on a machine running our patched herdr-core: it puts a release without the fixes there"])
+        say("warn", f"Settings → Machines will offer Update for {', '.join(n.split()[0] for n in older)}: skip it where herdr-core is our patched build",
+            [f"they run {', '.join(older)}, older than this Mac's {mac}; Update would put a release without the fixes there"])
 
 
 def backup_section():
@@ -556,12 +566,45 @@ def after(bundle, running, waiting, core_latest, core, ms):
     machines_section(core, ms, core_latest)
 
 
+class Tee:
+    def __init__(self, *streams):
+        self.streams = streams
+
+    def write(self, text):
+        for s in self.streams:
+            s.write(text)
+        return len(text)
+
+    def flush(self):
+        for s in self.streams:
+            s.flush()
+
+
+def keep_report(mode):
+    """What this run prints goes to CACHE/report-<mode>.txt too, for --show."""
+    CACHE.mkdir(parents=True, exist_ok=True)
+    f = open(CACHE / f"report-{mode}.txt", "w")
+    f.write(f"herdr-update-check{' --after' if mode == 'after' else ''}, {time.strftime('%Y-%m-%d %H:%M')}\n\n")
+    sys.stdout = Tee(sys.stdout, f)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Is the Herdr update waiting safe for this setup? (see the top of this file)")
     parser.add_argument("--after", action="store_true", help="check after restarting into the update")
     parser.add_argument("--from", dest="old", help="compare two Herdr releases: this one…")
     parser.add_argument("--to", dest="new", help="…and this one")
+    parser.add_argument("--show", choices=("before", "after"), help="print the last report (in a terminal, then stay as a shell)")
     args = parser.parse_args()
+
+    if args.show:
+        report = CACHE / f"report-{args.show}.txt"
+        print(report.read_text() if report.exists() else "No report yet: herdr-update-check hasn't run.")
+        if sys.stdin.isatty() and sys.stdout.isatty():
+            sys.stdout.flush()
+            os.chdir(REPO)
+            shell = os.environ.get("SHELL") or "/bin/zsh"
+            os.execvp(shell, [shell, "-l"])
+        return
 
     if args.old or args.new:
         if not (args.old and args.new):
@@ -576,6 +619,7 @@ def main():
     running, waiting = app_version(bundle), downloaded(bundle)
     core, ms = mac_core(), machines()
     core_latest = release("core")
+    keep_report("after" if args.after else "before")
     if args.after:
         after(bundle, running, waiting, core_latest, core, ms)
         print("\n→ " + ("All good." if WORST == 0 else "Look at the CHECK lines." if WORST == 1 else "See the STOP lines."))
@@ -586,6 +630,7 @@ def main():
             print("\n→ Fine to restart (Restart in the update pill). Afterwards: herdr-update-check --after")
         else:
             print("\n→ " + ("Look at the CHECK lines before restarting." if WORST == 1 else "Don't restart yet: see the STOP lines."))
+    sys.stdout.flush()
     sys.exit(WORST)
 
 

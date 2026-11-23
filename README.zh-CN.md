@@ -83,11 +83,12 @@ git pull && ./install.sh
 
 ## Herdr 提示更新时
 
-更新不会覆盖这套配置：Herdr 只重写它自带的 mod 和布局，自带的被改过的话，会先挪到一边再写新版。它不保证的是这些 mod 更新后还能照常工作，因为有几处依赖了 Herdr 内部：⌘G 的光晕照抄了它算窗格位置的代码，合并 tab 直接改它的布局文档，从它那里复制来的 mod 也收不到它的改动。所以更新提示出来时：
+更新不会覆盖这套配置：Herdr 只重写它自带的 mod 和布局，自带的被改过的话，会先挪到一边再写新版。它不保证的是这些 mod 更新后还能照常工作，因为有几处依赖了 Herdr 内部：⌘G 的光晕照抄了它算窗格位置的代码，合并 tab 直接改它的布局文档，从它那里复制来的 mod 也收不到它的改动。所以 Herdr 一有更新准备好，标签栏（my-tabs 的 `updatecheck.js`）就自动跑 `herdr-update-check`，在更新提示旁边弹一条通知说结果：可以直接 Restart、有几处要先看，或者先别更新。重启之后它再跑一遍，告诉你所有 mod 是否都能加载。点通知可以看完整报告。也可以手动跑：
 
 ```sh
 herdr-update-check           # 这次更新对这套配置安全吗？不安全时会说要看哪里
 herdr-update-check --after   # 点 Restart 之后：mod 都能加载吗，各台机器没问题吧
+herdr-update-check --show before   # 上一次的报告（after 同理）
 ```
 
 它在这些 mod 依赖 Herdr 的地方，对比正在用的版本和等着装的版本的源码（mod 接口，用到的命令、标签和名字，算窗格位置的代码，布局格式，复制来的 mod），并检查 herdr-core：是否换了新一代 core，以及哪些机器的 core 带着还没发布的修复（`update-check.py` 里的 `FIXES`）：在这些机器上点设置 → Machines 里的 Update，会换成不带修复的发布版。`--from 0.1.16 --to 0.1.17` 可以对比任意两个版本。`install.sh` 会把它链接到 `~/.local/bin`。
@@ -99,7 +100,7 @@ herdr-update-check --after   # 点 Restart 之后：mod 都能加载吗，各台
 | `herdr-app/keys.json` | 上面那些快捷键 |
 | `herdr-app/layouts/my-main.json` | 布局 my-main：灰蓝色焦点框；左栏最上面一条用 my-chrome，往下是 my-projects、my-agents；窗格标题栏用 my-pane，右键菜单用 my-menu |
 | `herdr-app/mods/my-projects/` | Projects 面板，逻辑在 `model.js`。`optwatch.c` 是个小程序，`install.sh` 把它编译到 `~/.local/bin/herdr-optwatch`：它告诉左栏 ⌥ 有没有按住，也告诉 tab 栏拖到栏下面的拖动什么时候松手，因为 mod 只有拿到键盘焦点才知道修饰键（焦点通常在终端里），鼠标也只有在 mod 上方时才听得到。它只在 Herdr 是前台 app 时运行 |
-| `herdr-app/mods/my-tabs/` | tab 栏，还有 Overview 按钮、关闭后可恢复（`reopen.js`）、关闭会断开还在跑的子终端时先问一句（`ask.js`；`workers.js` 判断哪些是 worker，关闭时把它们送回而不是结束，并在要求时结束 manager 的所有 worker）、⌘G（`waiting.js`；`glow.js` 算出跳到的窗格在哪，给 my-glow 画光晕：Herdr 的边框画在窗格里面，也不告诉 mod 窗格在哪，所以它照 Herdr 的排法，用布局和这个 tab 的分屏算出来）和 ⌃Tab 的顺序（`recent.js`）。`jobs.js` 从 `~/.claude/jobs` 里 Claude Code 的记录得出后台会话（`claude attach`）的状态，是监听文件变化，不是轮询：tab 栏把状态写到会话所在终端的 `note.job` 标签上，其他面板读这个标签；响铃规则和 Herdr 一样。服务器上的会话来自 hook 在那边写的 `note.bg` 标签，从 Herdr 自己的终端列表里读（Herdr 不在前台时不重画，所以那时每 2 秒看一次）。把 worker 留成 tab 和送回，走它的 `keep`、`sendback`、`peek` 三个命令，Agents 列表、菜单和 peek 都用它们（`peek.js` 负责打开 peek）。`layoutdoc.js` 合并两个 tab 时，一次改写那台机器的布局，所以出来就是分好屏的样子；Herdr 的命令只能在当前焦点窗格旁边分屏，那样得先单独显示目标 tab。这个布局格式不是公开接口，哪天变了，合并会退回用那些命令。`projects.js` 是 my-projects 的 `model.js` 的拷贝，因为 mod 不能引用别的 mod 的文件 |
+| `herdr-app/mods/my-tabs/` | tab 栏，还有 Overview 按钮、关闭后可恢复（`reopen.js`）、关闭会断开还在跑的子终端时先问一句（`ask.js`；`workers.js` 判断哪些是 worker，关闭时把它们送回而不是结束，并在要求时结束 manager 的所有 worker）、⌘G（`waiting.js`；`glow.js` 算出跳到的窗格在哪，给 my-glow 画光晕：Herdr 的边框画在窗格里面，也不告诉 mod 窗格在哪，所以它照 Herdr 的排法，用布局和这个 tab 的分屏算出来）和 ⌃Tab 的顺序（`recent.js`）。`jobs.js` 从 `~/.claude/jobs` 里 Claude Code 的记录得出后台会话（`claude attach`）的状态，是监听文件变化，不是轮询：tab 栏把状态写到会话所在终端的 `note.job` 标签上，其他面板读这个标签；响铃规则和 Herdr 一样。服务器上的会话来自 hook 在那边写的 `note.bg` 标签，从 Herdr 自己的终端列表里读（Herdr 不在前台时不重画，所以那时每 2 秒看一次）。把 worker 留成 tab 和送回，走它的 `keep`、`sendback`、`peek` 三个命令，Agents 列表、菜单和 peek 都用它们（`peek.js` 负责打开 peek）。`layoutdoc.js` 合并两个 tab 时，一次改写那台机器的布局，所以出来就是分好屏的样子；Herdr 的命令只能在当前焦点窗格旁边分屏，那样得先单独显示目标 tab。这个布局格式不是公开接口，哪天变了，合并会退回用那些命令。`projects.js` 是 my-projects 的 `model.js` 的拷贝，因为 mod 不能引用别的 mod 的文件。`updatecheck.js` 在 Herdr 有更新准备好时、以及重启之后，自动跑 `herdr-update-check` 并弹通知说结果（见「Herdr 提示更新时」） |
 | `herdr-app/mods/my-glow/` | ⌘G 在窗格外的光晕，分成几条贴着窗格四边（浮层窗口，不抢键盘）。等 Herdr 窗口到前台后，光晕用 0.15 秒从边框往外晕开，停 0.3 秒，再用 0.3 秒先快后慢地淡出，然后这几条自己关掉 |
 | `herdr-app/mods/agent-switcher/` | ⌃Tab 弹窗：每个窗格一张卡片，agent 显示最近的 prompt 和回复，shell 显示所在目录 |
 | `herdr-app/mods/my-pane/` | 窗格标题栏（Herdr 自带的拷贝）：分屏、全屏、关闭这几个按钮换成两个，鼠标移到标题栏上才出现：Fork，在跑 Claude 的窗格上（fork.js 在那台机器上从 Claude Code 自己的记录里找到它的会话；跑在计算节点上的 Claude 则看 hook 写的标签，副本经 ssh 开在那个节点上）；Move to new tab，在分屏里的窗格上。agent 的窗格显示它会话的名字（agent 设的标题，和 Agents 列表里一样）；别的机器上的终端，在目录前面标出那台机器 |
