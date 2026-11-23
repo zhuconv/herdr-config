@@ -1,4 +1,4 @@
-"""Has every new Claude Code session load the mods in ~/.claude/mods (short-names): adds each
+"""Has every new Claude Code session load the mods in ~/.claude/mods (short-names, accounts): adds each
 one's folder to CLAUDE_CODE_PLUGIN_DIRS in the env of ~/.claude/settings.json, keeping any
 folders already listed there.
 
@@ -10,7 +10,7 @@ import os
 import shutil
 import time
 
-MODS = ["~/.claude/mods/short-names"]
+MODS = ["~/.claude/mods/short-names", "~/.claude/mods/accounts"]
 
 path = os.path.expanduser("~/.claude/settings.json")
 os.makedirs(os.path.dirname(path), exist_ok=True)

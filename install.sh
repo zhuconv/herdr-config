@@ -59,12 +59,19 @@ if [ "${1:-}" = "--remote" ]; then
       if [ -L "$d" ] || [ ! -e "$d" ]; then ln -sfn "../../.agents/skills/$1" "$d"
       else echo "$d is a folder, so Claude Code keeps that copy" >&2; fi' sh "$s"
   done
-  # Claude Code's short command names: the mod in ~/.claude/mods, loaded by new sessions.
-  (cd claude-mods && find short-names -type f ! -name .DS_Store ! -name tsconfig.json ! -path '*/.claude-plugin/types/*') | while read -r f; do
+  # Claude Code's mods in ~/.claude/mods, loaded by new sessions: the short command names, and
+  # accounts (/auth, and the account tag on artifact links).
+  (cd claude-mods && find short-names accounts -type f ! -name .DS_Store ! -name tsconfig.json ! -path '*/.claude-plugin/types/*') | while read -r f; do
     hc file write --on "$m" ".claude/mods/$f" <"claude-mods/$f" >/dev/null
   done
   hc exec --on "$m" -i -- python3 - <claude-mods/add-to-claude.py
-  echo "$m: agent-note, the codex function, the hc-workers and hc-find skills and the short command names are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
+  # The accounts mod's table of aliases and emails, readable by its owner only.
+  table="$HOME/.config/claude-accounts/accounts.json"
+  if [ -f "$table" ]; then
+    hc exec --on "$m" -i -- sh -c 'umask 077; d=$HOME/.config/claude-accounts
+      mkdir -p "$d" && cat >"$d/accounts.json" && chmod 600 "$d/accounts.json"' <"$table"
+  fi
+  echo "$m: agent-note, the codex function, the hc-workers and hc-find skills, the short command names and /auth are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
   exit 0
 fi
 
@@ -108,8 +115,8 @@ link_skill hc-find
 # PermissionRequest (added once, never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
 python3 agent-note-hook/add-to-claude.py
 python3 agent-note-hook/add-to-codex.py
-# Claude Code's short command names (claude-mods/short-names, put in ~/.claude/mods by paths.sh):
-# every new session loads the mod.
+# Claude Code's mods (claude-mods/short-names and claude-mods/accounts, put in ~/.claude/mods by
+# paths.sh): every new session loads them.
 python3 claude-mods/add-to-claude.py
 # Codex in Herdr's terminals runs --no-daemon (see RC_LINE above), and Codex is asked whether it
 # trusts the hooks, which are then trusted with its own hashes if not.

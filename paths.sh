@@ -28,6 +28,7 @@ ITEMS=(
   "skills/hc-workers/|$HOME/.agents/skills/hc-workers/"
   "skills/hc-find/|$HOME/.agents/skills/hc-find/"
   "claude-mods/short-names/|$HOME/.claude/mods/short-names/"
+  "claude-mods/accounts/|$HOME/.claude/mods/accounts/"
   "raycast/postkey.c|$HOME/.local/share/postkey/postkey.c"
 )
 SKIP=(--exclude gpui-kit.d.ts --exclude jsconfig.json --exclude .DS_Store
