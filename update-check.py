@@ -9,7 +9,8 @@
 #
 # The tab bar (mods/my-tabs, updatecheck.js) runs the first two by itself, when Herdr has an
 # update ready and once it's installed, and says what they found in a notification; a click on
-# it opens the saved report in a dialog.
+# it opens the saved report in a dialog. --after doesn't ask again about the API lines the run
+# before the restart showed (the snapshot keeps them): only what's new to look at.
 #
 # An update never overwrites our files: Herdr rewrites only its own mods and layouts, and moves one
 # that was edited aside first (`<name>-edited`). What it doesn't promise is that our mods keep
@@ -30,6 +31,7 @@
 import argparse
 import difflib
 import json
+from collections import Counter
 import os
 import re
 import shutil
@@ -63,6 +65,9 @@ CORE_GENERATION = ("src/hc.rs", r"pub const GENERATION: u64 = (\d+);")
 CORE_MIN = "distribution/core-version"
 
 WORST = 0
+# The mod API lines the check before the restart showed, by file: snapshot() keeps them for
+# --after, which leaves them out.
+SHOWN = {}
 
 
 def say(level, text, more=()):
@@ -320,6 +325,7 @@ def compare(old, new):
 
     api = changed(a, b, API)
     removed, added = code_only(t for _, s, t in api if s == "-"), code_only(t for _, s, t in api if s == "+")
+    SHOWN["herdr.d.ts"] = removed
     if removed:
         say("check", "the mod API changed, not only grew (herdr.d.ts lines removed or rewritten):", removed)
     else:
@@ -480,7 +486,7 @@ def snapshot(app, status):
         if (APP_HOME / name).exists():
             shutil.copyfile(APP_HOME / name, SNAP / name)
     listing = {d: sorted(p.name for p in (APP_HOME / d).iterdir()) for d in ("mods", "layouts") if (APP_HOME / d).is_dir()}
-    (SNAP / "state.json").write_text(json.dumps({"app": app, "errors": (status or {}).get("errors"), **listing}, indent=1))
+    (SNAP / "state.json").write_text(json.dumps({"app": app, "errors": (status or {}).get("errors"), "shown": SHOWN, **listing}, indent=1))
 
 
 def before(bundle, running, waiting, app_latest, core_latest, core, ms):
@@ -551,8 +557,19 @@ def after(bundle, running, waiting, core_latest, core, ms):
         lines = list(difflib.unified_diff(old.read_text().splitlines(), now.read_text().splitlines(), lineterm="", n=0))
         lines = [l for l in lines if l[:1] in "+-" and not l.startswith(("+++", "---"))]
         removed = code_only(l[1:] for l in lines if l[0] == "-")
-        if removed:
-            say("check", f"{name} lost or rewrote lines (our mods may use them):", removed)
+        # The ones the check before the restart showed were looked at then: only the rest asks.
+        left, new = Counter((snap.get("shown") or {}).get(name) or []), []
+        for line in removed:
+            if left[line] > 0:
+                left[line] -= 1
+            else:
+                new.append(line)
+        seen = len(removed) - len(new)
+        also = f"{seen} line{'' if seen == 1 else 's'} the check before the restart showed"
+        if new:
+            say("check", f"{name} lost or rewrote lines (our mods may use them)" + (f", besides the {also}" if seen else "") + ":", new)
+        elif seen:
+            say("ok", f"{name}: nothing lost or rewritten besides the {also}")
         else:
             say("ok", f"{name}: " + ("only additions" if lines else "unchanged"))
 

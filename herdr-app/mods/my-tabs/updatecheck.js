@@ -3,13 +3,51 @@
 // the background and a notification says what it found, beside Herdr's own pill: fine to
 // restart, something to look at first, or don't restart yet. After the restart into the new
 // version, or onto a new herdr-core, it runs again (--after): does every mod load, are the
-// machines fine. A click on the notification opens the whole report in a dialog (updateview.js;
-// reportRows here reads it). Pure: main.js looks at updates() every CHECK_EVERY ms (each call
-// reads Herdr's update notes from disk, so not in render) and runs the check.
+// machines fine. What the check before the restart found stays on screen while that update
+// waits (HOLD), so it's there whenever the pill is noticed. A click on the notification opens
+// the whole report in a dialog (updateview.js; reportRows here reads it). Pure: main.js looks
+// at updates() every CHECK_EVERY ms (each call reads Herdr's update notes from disk, so not in
+// render) and runs the check.
 
 export const CHECK_EVERY = 60000;
 // A notification about something to look at stays until it's clicked, or this long.
 const LONG = 600000;
+// What the check before the restart found stays while its update waits (Herdr's pill shows):
+// main.js closes it once the update is in or another one waits, shows it again in a new copy of
+// the mod (a restart, a reload), and forgets it once clicked. Herdr closes every notification
+// after its timeout, so: a week.
+export const HOLD = 7 * 24 * 3600 * 1000;
+
+/** The notice of the check before the restart, held while its update waits (HOLD): one at a
+ *  time, and saved (`store`: get/set on localStorage), so a new copy of the mod shows it again.
+ *  `post`: notify(), which returns the notice's id; `close`: closeOverlay(). */
+export class HeldNotice {
+  constructor({ post, close, store }) {
+    this.post = post;
+    this.close = close;
+    this.store = store;
+    try { this.held = JSON.parse(store.get("update.held") ?? "null"); } catch { this.held = null; }
+    // Whether this copy has shown it (or dropped it): a new copy shows the saved one again.
+    this.shown = false;
+  }
+
+  /** At each poll, with what's waiting now (readyKey): drops the notice once its update is in or
+   *  another one waits, and shows it again in a new copy of the mod. */
+  poll(ready) {
+    const h = this.held;
+    if (!h) return;
+    if (h.key !== ready) this.set(null);
+    else if (!this.shown) this.set(h.key, h.n);
+  }
+
+  /** Shows `n` for the update `key` (readyKey), in place of the one before; null closes it. */
+  set(key, n) {
+    if (this.held?.id) this.close(this.held.id);
+    this.held = key ? { key, n, id: this.post(n) } : null;
+    this.shown = true;
+    this.store.set("update.held", JSON.stringify(this.held));
+  }
+}
 
 /** What's waiting for Herdr's Restart, as a key ("app 0.1.18 core 0.1.23"), or null. */
 export function readyKey(u) {
@@ -56,8 +94,9 @@ export function reportRows(text) {
 }
 
 /** The notification for a run of the check ({ code, stdout, stderr } from exec): what notify()
- *  takes. `mode`: "before" or "after" the restart; `what`: about(). */
-export function notice(mode, result, what) {
+ *  takes. `mode`: "before" or "after" the restart; `what`: about(); `waiting`: Herdr has that
+ *  update ready, so the verdict stays as long as it does (HOLD). */
+export function notice(mode, result, what, waiting = false) {
   const { code, stdout = "", stderr = "" } = result ?? {};
   if (/Nothing is waiting/.test(stdout)) return { title: "No Herdr update is waiting", level: "info", timeout: 5000 };
   const found = { CHECK: [], STOP: [], WARN: [] };
@@ -66,12 +105,13 @@ export function notice(mode, result, what) {
     if (m) found[m[1]].push(m[2].trim());
   }
   const action = { name: `my-tabs.update-report ${mode}` };
+  const held = mode === "before" && waiting ? HOLD : null;
   if (code === 0) {
     return {
       title: mode === "before" ? `${what}: fine to restart` : `Now on ${what}: all good`,
       body: found.WARN[0] ?? (mode === "before" ? "Nothing in this setup is in the way. Click for the report." : "Every mod loads. Click for the report."),
       level: "success",
-      timeout: found.WARN.length ? LONG : 20000,
+      timeout: held ?? (found.WARN.length ? LONG : 20000),
       action,
     };
   }
@@ -83,7 +123,7 @@ export function notice(mode, result, what) {
         : code === 2 ? `${what}: don't restart yet` : `${what}: ${things} to look at before restarting`,
       body: found.STOP[0] ?? found.CHECK[0] ?? "Click for the report.",
       level: code === 2 ? "error" : "warning",
-      timeout: LONG,
+      timeout: held ?? LONG,
       action,
     };
   }

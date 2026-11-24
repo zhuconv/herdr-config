@@ -15,7 +15,7 @@ import { Recent } from "./recent.js";
 import { openPeek } from "./peek.js";
 import { tabsOf, agentKeys, withBackground, tabProject, tabGroups, nthTab, replacement, dropZone, withDirColors, place, withGroup, shortPath, ownerOf, starters, LOCAL_KEY } from "./projects.js";
 import { mergeLayout, swapOrder, localId } from "./layoutdoc.js";
-import { CHECK_EVERY, readyKey, installedKey, about, notice } from "./updatecheck.js";
+import { CHECK_EVERY, HOLD, HeldNotice, readyKey, installedKey, about, notice } from "./updatecheck.js";
 import { openReport, reportView } from "./updateview.js";
 
 // Shared with mods/agent-switcher: { list, index, from, at, alive } while the ⌃Tab popup is open.
@@ -212,6 +212,8 @@ export default class Tabs extends View {
     // restart runs that on every mod, this one included.
     if (!checking()) {
       this.updateWatch = { busy: false, checked: localStorage.getItem("update.checked"), installed: localStorage.getItem("update.installed") };
+      this.heldNotice = new HeldNotice({ post: notify, close: closeOverlay,
+        store: { get: (k) => localStorage.getItem(k), set: (k, v) => localStorage.setItem(k, v) } });
       cx.timer.after(20000, () => this.pollUpdates());
       this.updateTimer = cx.timer.every(CHECK_EVERY, () => this.pollUpdates());
     }
@@ -220,12 +222,15 @@ export default class Tabs extends View {
   // ---- Herdr's updates (updatecheck.js)
 
   // What's waiting and what's installed, from Herdr: a new update ready is checked once, and so is
-  // a new version once it's installed (and the core is done updating).
+  // a new version once it's installed (and the core is done updating). The verdict before the
+  // restart stays while its update waits (updatecheck.js HOLD).
   pollUpdates() {
     const w = this.updateWatch;
     if (!w || w.busy || this.ended) return;
     let u;
     try { u = updates(); } catch { return; }
+    const ready = readyKey(u);
+    this.heldNotice.poll(ready);
     const installed = installedKey(u);
     if (installed && installed !== w.installed) {
       const before = w.installed;
@@ -233,11 +238,9 @@ export default class Tabs extends View {
       localStorage.setItem("update.installed", installed);
       if (before) return void this.runUpdateCheck("after", about("after", u, before));
     }
-    const ready = readyKey(u);
     if (ready && ready !== w.checked) {
       w.checked = ready;
-      localStorage.setItem("update.checked", ready);
-      this.runUpdateCheck("before", about("before", u));
+      this.runUpdateCheck("before", about("before", u), ready);
     }
   }
 
@@ -245,10 +248,13 @@ export default class Tabs extends View {
     if (!this.updateWatch || this.updateWatch.busy) return;
     let u = null;
     try { u = updates(); } catch {}
-    this.runUpdateCheck(mode, about(mode, u));
+    this.runUpdateCheck(mode, about(mode, u), mode === "before" ? readyKey(u) : null);
   }
 
-  async runUpdateCheck(mode, what) {
+  // `ready`: the update this run is about, when Herdr has one waiting (readyKey). It counts as
+  // checked once the verdict is out: a copy of this mod that ends meanwhile drops the verdict, and
+  // the next copy checks again.
+  async runUpdateCheck(mode, what, ready = null) {
     const w = this.updateWatch;
     w.busy = true;
     let result;
@@ -259,12 +265,18 @@ export default class Tabs extends View {
     } finally {
       w.busy = false;
     }
-    if (!this.ended) notify(notice(mode, result, what));
+    if (this.ended) return;
+    if (ready) localStorage.setItem("update.checked", ready);
+    const n = notice(mode, result, what, Boolean(ready));
+    if (n.timeout === HOLD) this.heldNotice.set(ready, n);
+    else notify(n);
   }
 
-  // The last check's report, as herdr-update-check saved it, in a dialog (updateview.js).
+  // The last check's report, as herdr-update-check saved it, in a dialog (updateview.js). A click
+  // on the held notice lands here (Herdr has closed it): it's been seen, so it isn't held any more.
   async updateReport(mode) {
     mode = mode === "after" ? "after" : "before";
+    if (mode === "before" && this.heldNotice?.held) this.heldNotice.set(null);
     const text = await readTextFile(`${home()}/.cache/herdr-update-check/report-${mode}.txt`);
     if (text) openReport(mode, text);
     else notify({ title: "No update check report yet", timeout: 4000 });
