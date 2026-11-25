@@ -21,8 +21,9 @@
 
 import { View, div, svg, image } from "gpui-kit";
 import { v_flex, h_flex, InputState, Input, ScrollHandle } from "gpui-base";
-import { agents, panes, terminals, spaces, focused, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window } from "herdr";
+import { agents, panes, terminals, spaces, focused, run, theme, settings, shared, setShared, openOverlay, closeOverlay, props, layout, home, appHome, readTextFile, nextCommand, exec, hc, window, setWindowTitle, checking } from "herdr";
 import { COLORS, COLOR_NAMES, GLYPHS, assignIcon, withIcons, group, ownerOf, moveDir, addDir, agentsRunOn, splitTyped, matchDirs, completeWith, focusedPill, addProject, deleteProject, renameProject, renameIn, moveTo, place, withGroup, urgent, duration, nameOf, shortPath, splitDir, dirKey, baseName, isHome, tabsOf, tabProject, tabGroups, landing, withDirColors, agentKeys, runsAgent, noteStatus, starters, filedPane, LOCAL_KEY } from "./model.js";
+import { windowTitle } from "./title.js";
 
 const MOD = "my-projects";
 const STATE = `${MOD}.state`;
@@ -47,6 +48,9 @@ const TAB_ORDER = "my-tabs.order";
 // Until 2026-11-11 projects were folder names and this listed the ones made with +.
 // Read only to start STATE: those come along, empty; everything else starts Unsorted.
 const KEPT = `${MOD}.list`;
+// The copy that last named the window (retitle): a closing copy gives the title back only if it
+// is still the one, so a reload's new copy, which may start first, keeps its title.
+const TITLER = `${MOD}.titler`;
 const UNSORTED = "\u0000unsorted";
 const icon = (g) => `mods/${MOD}/icons/${g}.svg`;
 const chrome = (n) => `mods/workspace-chrome/${n}.svg`;
@@ -254,9 +258,11 @@ function askDelete(name) {
 }
 
 export default class Projects extends View {
-  // Herdr is closing this copy: the ⌥ watcher's loop ends instead of starting another.
+  // Herdr is closing this copy: the ⌥ watcher's loop ends instead of starting another, and the
+  // window's title goes back to "Herdr" (another layout's time isn't this panel's to name).
   close() {
     this.ended = true;
+    if (this.title !== undefined && shared(TITLER) === this.id) setWindowTitle(null);
   }
 
   init(_props, cx) {
@@ -444,6 +450,23 @@ export default class Projects extends View {
     if (first || key === this.focusSeen) { this.focusSeen = key; return; }
     this.focusSeen = key;
     if (f && this.open[f.group] !== f.pill) { this.open[f.group] = f.pill; this.save(); }
+  }
+
+  // The window's title names the focused conversation and its project (title.js), for time
+  // trackers such as ActivityWatch. Herdr redraws this panel when focus moves or a conversation's
+  // name or folder changes, so render calls this; Herdr is told only when the title changes.
+  retitle(convs) {
+    if (checking()) return;
+    const ps = panes(), ts = terminals();
+    const title = windowTitle(focused(), {
+      convs, panes: ps, terminals: ts, state: state(),
+      tabs: () => tabsOf(spaces(), ps, agents(), keysNow(), new Map(), starters(ts, ps)),
+    });
+    if (title === this.title) return;
+    this.title = title;
+    this.id ??= `${Date.now()}.${Math.random()}`;
+    if (shared(TITLER) !== this.id) setShared(TITLER, this.id);
+    setWindowTitle(title);
   }
 
   // Each project's last-used pane (see init): the focused pane, filed under its tab's project
@@ -708,6 +731,7 @@ export default class Projects extends View {
     if (shared(LAST) != null) setShared(LAST, null); // the tab bar's old copy (see LAST)
     const convs = conversations();
     this.track(convs, now);
+    this.retitle(convs);
     const { projects, unsorted } = projectsNow(convs);
     // A project seen for the first time gets its icon once; a write re-renders every mod.
     const icons = withIcons(shared(ICONS), projects.map((p) => p.name));

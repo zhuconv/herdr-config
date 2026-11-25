@@ -13,6 +13,7 @@
 ## 能做什么
 
 - **Projects 面板**（左上）。一个 project 由若干个"机器 · 目录"组成。每个 Claude 对话归到包含它所在目录的 project（子目录跟父目录走），没归类的在 Unsorted。点 project 那一行折叠/展开。点目录胶囊列出它的对话；你所在的那个胶囊会自己打开。拖动胶囊，或右键它，可以挪到别的 project。
+- **在 ActivityWatch 里按 project 记时间。** Herdr 的窗口标题写着你正在用的对话和它的 project（按 Projects 面板的归法）：`Herdr — <project> · <对话> · <程序>`，比如 `Herdr — paper · fix-figures · Claude Code`。ActivityWatch 的窗口监视器记录前台窗口的标题，所以每个 project 写一条分类规则（`^Herdr — paper( ·|$)`），就能统计每个 project 花的时间，人不在电脑前的时间不算。shell 没有对话这一段（`Herdr — paper · zsh`），归到它所在 tab 的 project；不属于任何 project 的目录跟面板一样算 Unsorted（`Herdr — Unsorted · …`）。Herdr 自己的窗口里看不到这个标题：Window 菜单、Dock 菜单、调度中心和共享屏幕时选窗口的列表里才看得到。
 - **在任意机器上新建目录。** project 那一行右边的 **+**（或右键 → New directory…）：选机器、填路径，边输入边提示那台机器上的文件夹（Tab 补全），在那台机器上建好目录、加进这个 project，并在里面开 Claude。
 - **一次只看一个 project 的 tab。** 顶部栏显示当前 project 在所有 space、所有机器上的 tab，按目录分组。一个目录有两个以上 tab 时，前面一个色点、下面一条细线。tab 上只写 agent 的名字，左边的编号就是 ⌘1–⌘9 用的号。
 - **拖动分屏。** 把一个 tab 拖到另一个上面合成分屏（按住 ⌥ 是上下分），拖到边缘是排序。拆回来：把名字从分屏 tab 里拖出来、右键它，或者点窗格标题栏上的按钮。
@@ -101,7 +102,7 @@ herdr-update-check --show before   # 上一次的报告（after 同理）
 |---|---|
 | `herdr-app/keys.json` | 上面那些快捷键 |
 | `herdr-app/layouts/my-main.json` | 布局 my-main：灰蓝色焦点框；左栏最上面一条用 my-chrome，往下是 my-projects、my-agents；窗格标题栏用 my-pane，右键菜单用 my-menu |
-| `herdr-app/mods/my-projects/` | Projects 面板，逻辑在 `model.js`。`optwatch.c` 是个小程序，`install.sh` 把它编译到 `~/.local/bin/herdr-optwatch`：它告诉左栏 ⌥ 有没有按住，也告诉 tab 栏拖到栏下面的拖动什么时候松手，因为 mod 只有拿到键盘焦点才知道修饰键（焦点通常在终端里），鼠标也只有在 mod 上方时才听得到。它只在 Herdr 是前台 app 时运行 |
+| `herdr-app/mods/my-projects/` | Projects 面板，逻辑在 `model.js`。`optwatch.c` 是个小程序，`install.sh` 把它编译到 `~/.local/bin/herdr-optwatch`：它告诉左栏 ⌥ 有没有按住，也告诉 tab 栏拖到栏下面的拖动什么时候松手，因为 mod 只有拿到键盘焦点才知道修饰键（焦点通常在终端里），鼠标也只有在 mod 上方时才听得到。它只在 Herdr 是前台 app 时运行。`title.js` 用焦点所在的对话和它的 project 给 Herdr 窗口起标题，给 ActivityWatch 用（见「能做什么」） |
 | `herdr-app/mods/my-tabs/` | tab 栏，还有 Overview 按钮、关闭后可恢复（`reopen.js`，退出的 agent 也能接回来）、关闭会断开还在跑的子终端时先问一句（`ask.js`；`workers.js` 判断哪些是 worker，关闭时把它们送回而不是结束，并在要求时结束 manager 的所有 worker）、⌘G（`waiting.js`；`glow.js` 算出跳到的窗格在哪，给 my-glow 画光晕：Herdr 的边框画在窗格里面，也不告诉 mod 窗格在哪，所以它照 Herdr 的排法，用布局和这个 tab 的分屏算出来）和 ⌃Tab 的顺序（`recent.js`）。`rename.js` 让改有一个 Claude 的 tab 名时，会话名跟着改。`jobs.js` 从 `~/.claude/jobs` 里 Claude Code 的记录得出后台会话（`claude attach`）的状态，是监听文件变化，不是轮询：tab 栏把状态写到会话所在终端的 `note.job` 标签上，其他面板读这个标签；响铃规则和 Herdr 一样。服务器上的会话来自 hook 在那边写的 `note.bg` 标签，从 Herdr 自己的终端列表里读（Herdr 不在前台时不重画，所以那时每 2 秒看一次）。把 worker 留成 tab 和送回，走它的 `keep`、`sendback`、`peek` 三个命令，Agents 列表、菜单和 peek 都用它们（`peek.js` 负责打开 peek）。`layoutdoc.js` 合并两个 tab 时，一次改写那台机器的布局，所以出来就是分好屏的样子；Herdr 的命令只能在当前焦点窗格旁边分屏，那样得先单独显示目标 tab。这个布局格式不是公开接口，哪天变了，合并会退回用那些命令。`projects.js` 是 my-projects 的 `model.js` 的拷贝，因为 mod 不能引用别的 mod 的文件。`updatecheck.js` 在 Herdr 有更新准备好时、以及重启之后，自动跑 `herdr-update-check` 并弹通知说结果（见「Herdr 提示更新时」） |
 | `herdr-app/mods/my-glow/` | ⌘G 在窗格外的光晕，分成几条贴着窗格四边（浮层窗口，不抢键盘）。等 Herdr 窗口到前台后，光晕用 0.15 秒从边框往外晕开，停 0.3 秒，再用 0.3 秒先快后慢地淡出，然后这几条自己关掉 |
 | `herdr-app/mods/agent-switcher/` | ⌃Tab 弹窗：每个窗格一张卡片，agent 显示最近的 prompt 和回复，shell 显示所在目录 |
