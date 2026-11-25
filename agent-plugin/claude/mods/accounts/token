@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+"""The access token of one Claude account's login as cswap keeps it, for /auth-here.
+
+    ~/.claude/mods/accounts/token <email> [<organization>] [--refresh]
+
+Prints one line of JSON:
+  {"token": ..., "expiresAt": <ms>}  the token of the login cswap keeps for that account;
+  {"active": true}                   the machine itself is on that account now, and Claude
+                                     Code holds its login: a session needs no other token;
+  {"error": ..., "dead": true}       there is no working login for it here (sign in again);
+  {"error": ...}                     it couldn't be had this time.
+
+The login is the one `cswap switch` would put on the machine: cswap's saved copy of the
+account. Near its expiry (cswap's own margin), or with --refresh after the API refused
+it, the token is refreshed through cswap's gate. A refresh token works once, so each
+login must have one keeper: cswap for a saved copy, Claude Code for the machine's own
+login, a `cswap run` session for the copy it runs on. This refreshes only cswap's.
+
+It runs in cswap's own Python (the claude_swap package), found from the cswap launcher,
+and acts on the machine's cswap store even from a `cswap run` session, as /auth does.
+"""
+import json
+import os
+import sys
+
+HOME = os.path.expanduser("~")
+for name in ("CLAUDE_CONFIG_DIR", "CLAUDE_SECURESTORAGE_CONFIG_DIR"):
+    os.environ.pop(name, None)
+
+
+def say(**answer):
+    print(json.dumps(answer))
+    sys.exit(0)
+
+
+def cswap_python():
+    """The interpreter cswap's launcher names on its first line, or None."""
+    dirs = os.environ.get("PATH", "").split(os.pathsep) + [os.path.join(HOME, ".local", "bin")]
+    for d in dirs:
+        launcher = os.path.join(d, "cswap") if d else ""
+        if launcher and os.path.isfile(launcher):
+            with open(os.path.realpath(launcher), "rb") as f:
+                first = f.readline().decode("utf-8", "replace").strip()
+            if first.startswith("#!") and len(first.split()) == 1:
+                python = first[2:]
+                return python if os.path.isfile(python) else None
+            return None
+    return None
+
+
+try:
+    from claude_swap import oauth
+    from claude_swap.switcher import ClaudeAccountSwitcher
+except ImportError:
+    python = cswap_python()
+    if python and os.path.realpath(python) != os.path.realpath(sys.executable):
+        os.execv(python, [python, "-I", os.path.abspath(__file__)] + sys.argv[1:])
+    say(error="cswap isn't installed here (uv tool install claude-swap)")
+
+DEAD = ("invalid_grant", "no_refresh_token")
+
+
+def slot_of(switcher, email, org):
+    """The slot cswap keeps that account in, and the email as cswap spells it."""
+    with open(switcher.sequence_file) as f:
+        accounts = json.load(f).get("accounts") or {}
+    for number, account in accounts.items():
+        saved_org = (account.get("organizationUuid") or "").lower()
+        if (account.get("email") or "").lower() == email and (not org or not saved_org or saved_org == org):
+            return str(number), account["email"]
+    return None, None
+
+
+def main(argv):
+    refresh = "--refresh" in argv
+    words = [a for a in argv if not a.startswith("--")]
+    if not 1 <= len(words) <= 2:
+        say(error="usage: token <email> [<organization>] [--refresh]")
+    email = words[0].lower()
+    org = words[1].lower() if len(words) > 1 else ""
+
+    switcher = ClaudeAccountSwitcher()
+    number, saved_email = slot_of(switcher, email, org)
+    if not number:
+        say(error="cswap has no login saved for it here", dead=True)
+    if switcher.current_account_number() == number:
+        say(active=True)
+
+    credentials = switcher.read_account_credentials(number, saved_email)
+    data = oauth.extract_oauth_data(credentials) if credentials else None
+    if not data or not data.get("accessToken"):
+        say(error="cswap has no login saved for it here", dead=True)
+
+    expired = oauth.is_oauth_token_expired(data.get("expiresAt"))
+    if (expired or refresh) and data.get("refreshToken"):
+        if switcher.live_session_pids_for(number, saved_email):
+            # That copy's keeper is the `cswap run` session: refreshing here would sign it out.
+            if expired:
+                say(error="a `cswap run` session is using this login, so it can't be refreshed here")
+        else:
+            outcome = switcher.consume_backup_grant(number, saved_email, credentials)
+            if outcome.credentials:
+                data = oauth.extract_oauth_data(outcome.credentials) or data
+            elif outcome.error in DEAD:
+                say(error="its saved login has expired", dead=True)
+            elif expired:
+                say(error="its login couldn't be refreshed (%s)" % outcome.error)
+    say(token=data["accessToken"], expiresAt=data.get("expiresAt"))
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

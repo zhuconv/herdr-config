@@ -1,8 +1,9 @@
-// Artifact links tagged with the account that published them, and /auth
-// switching the machine's account through cswap without losing a login.
-import type { On } from 'claude-code'
+// Artifact links tagged with the account that published them, /auth
+// switching the machine's account through cswap without losing a login, and
+// /auth-here running one session alone as another account.
+import type { EngineInterface, Next, On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
-import { aliasOf, entries, tag, UNSET } from '../hooks/register'
+import { aliasOf, auth, authHere, entries, hereFetch, hereStart, newHereState, tag, UNSET } from '../hooks/register'
 
 /** /auth as typed at the prompt. */
 const typed = (args: string) =>
@@ -40,6 +41,20 @@ class Machine {
   /** the login token the machine holds: one name per sign-in */
   liveCreds = 'login-0'
   private signIns = 0
+  /** the access token of the login cswap keeps for each email; a refresh gives the next one */
+  kept: Record<string, string> = {}
+  /** what ./token says instead, by email */
+  tokenFails: Record<string, { error: string; dead?: boolean }> = {}
+  /** ./token runs: what followed the script */
+  asked: string[][] = []
+  /** model requests as they left: where to, and the Authorization they carried */
+  sent: { url: string; auth: string | undefined }[] = []
+  /** what the API answers with */
+  apiStatus = 200
+  /** the mod's own store */
+  store: Record<string, unknown> = {}
+  statusLine: string | undefined = undefined
+  toasts: string[] = []
 
   constructor(email: string | null, org?: string) {
     if (email) this.files[`${HOME}/.claude.json`] = login(email, org)
@@ -62,6 +77,82 @@ class Machine {
     const raw = this.files[`${HOME}/.claude.json`]
     const a = raw ? JSON.parse(raw).oauthAccount : null
     return a ? { email: a.emailAddress, org: a.organizationUuid } : null
+  }
+
+  /** ./token, as it answers: the machine's own account is Claude Code's to hold. */
+  token(args: readonly string[]) {
+    const email = args[0] ?? ''
+    const live = this.live()
+    if (live && live.email.toLowerCase() === email) return { active: true }
+    const fail = this.tokenFails[email]
+    if (fail) return fail
+    if (!this.kept[email]) return { error: 'cswap has no login saved for it here', dead: true }
+    if (args.includes('--refresh')) this.kept[email] = this.kept[email].replace(/\d+$/, (n: string) => String(Number(n) + 1))
+    return { token: this.kept[email], expiresAt: Date.now() + 8 * 3600_000 }
+  }
+
+  /** A program the mod starts, as `env` runs it: the one after the unset variables, or 127. */
+  run(argv: string[]) {
+    const done = (exitCode: number, stdout: string, stderr = '') => ({ exitCode, stdout, stderr, isStdoutTruncated: false, isStderrTruncated: false })
+    this.started.push(argv)
+    const [bin, ...args] = argv.slice(UNSET.length)
+    if (argv[0] === 'env' && bin === 'python3' && args[0]?.endsWith('/token')) {
+      this.asked.push(args.slice(1))
+      return done(0, `${JSON.stringify(this.token(args.slice(1)))}\n`)
+    }
+    const found = (bin === 'cswap' && this.cswapAt === 'path') || (bin === `${HOME}/.local/bin/cswap` && this.cswapAt === 'local')
+    if (argv[0] !== 'env' || !found) return done(127, '', `env: ${bin}: No such file or directory`)
+    this.runs.push(args)
+    return this.cswap(args)
+  }
+
+  /** The mod's $ on this machine, for calling its /auth-here functions directly: a
+   *  test can't send a model request as the engine does. */
+  fake(): EngineInterface {
+    const self = this
+    return {
+      env: { get: async (name: string) => (name === 'HOME' ? HOME : name === 'CLAUDE_CONFIG_DIR' ? self.configDir : undefined) },
+      fs: {
+        read: async (path: string) => {
+          const text = self.files[path]
+          if (text === undefined) throw new Error(`${path}: no such file`)
+          return text
+        },
+      },
+      process: { run: async (argv: readonly string[]) => self.run([...argv]) },
+      store: {
+        get: async (key: string) => self.store[key],
+        set: async (key: string, value: unknown) => {
+          self.store[key] = JSON.parse(JSON.stringify(value))
+        },
+        delete: async (key: string) => {
+          delete self.store[key]
+        },
+      },
+      session: { id: async () => 'session-1' },
+      ui: {
+        status: (text: string | undefined) => {
+          self.statusLine = text
+        },
+        toast: (text: string) => {
+          self.toasts.push(text)
+        },
+        log: (text: string) => {
+          self.logs.push(text)
+        },
+      },
+      plugin: { name: 'accounts', root: `${HOME}/.claude/mods/accounts` },
+    } as unknown as EngineInterface
+  }
+
+  /** Where the hook sends a request on: the API, as this machine's answers it. */
+  network(): Next<'http.fetch'> {
+    const next = async (e: { url: string; init?: { headers?: Record<string, string> } }) => {
+      const headers = e.init?.headers ?? {}
+      this.sent.push({ url: e.url, auth: headers.authorization ?? headers.Authorization })
+      return { value: { status: this.apiStatus, ok: this.apiStatus < 300, headers: {}, text: '' } }
+    }
+    return Object.assign(next, { origin: { plugin: 'engine', tier: 'core' } }) as unknown as Next<'http.fetch'>
   }
 
   cswap(args: readonly string[]) {
@@ -114,18 +205,7 @@ class Machine {
       const text = this.files[e.path]
       return text !== undefined ? { value: text } : { deny: `${e.path}: no such file` }
     })
-    on('process.run', (_, e) => {
-      const argv = [...e.argv]
-      this.started.push(argv)
-      // Like env: the program after the unset variables, or 127 when it isn't there.
-      const [bin, ...args] = argv.slice(UNSET.length)
-      const found = (bin === 'cswap' && this.cswapAt === 'path') || (bin === `${HOME}/.local/bin/cswap` && this.cswapAt === 'local')
-      if (argv[0] !== 'env' || !found) {
-        return { value: { exitCode: 127, stdout: '', stderr: `env: ${bin}: No such file or directory`, isStdoutTruncated: false, isStderrTruncated: false } }
-      }
-      this.runs.push(args)
-      return { value: this.cswap(args) }
-    })
+    on('process.run', (_, e) => ({ value: this.run([...e.argv]) }))
     on('ui.log', (_, e) => {
       this.logs.push(e.text)
       return { value: undefined }
@@ -301,4 +381,214 @@ test('/auth to the current account saves its login again; to an unknown one chan
   expect((await $.command.run(typed('nobody'))).text).toContain('no account "nobody"')
   expect(changes(m)).toEqual([['add']])
   expect(m.live()?.email).toBe('gt@example.com')
+})
+
+// --- /auth-here -------------------------------------------------------------
+
+/** /auth-here as typed at the prompt. */
+const typedHere = (args: string) =>
+  ({ command: 'auth-here', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as const
+
+const MESSAGES = 'https://api.anthropic.com/v1/messages?beta=true'
+/** What a model request carries on the session's own login. */
+const OWN = '[redacted]'
+
+/** A session on machine m, driven as its hooks drive the mod: its commands, its
+ *  start, and its model requests (`send`, with the credential as the engine shows it). */
+function sessionOn(m: Machine) {
+  const st = newHereState()
+  const $ = m.fake()
+  return {
+    here: (args: string) => authHere($, st, args),
+    auth: (args: string) => auth($, args, st),
+    start: () => hereStart($, st),
+    send: (url = MESSAGES, headers: Record<string, string> = { authorization: OWN }) =>
+      hereFetch($, st, { url, init: { method: 'POST', headers: { 'anthropic-beta': 'oauth-2025-04-20', ...headers }, body: '{}' } }, m.network()),
+  }
+}
+
+/** jian's machine, with gt and jian saved and the tokens cswap keeps for them. */
+function jians() {
+  const m = new Machine('jian@example.com')
+  m.saved = [{ number: 1, email: 'gt@example.com' }, { number: 2, email: 'jian@example.com' }]
+  m.kept = { 'gt@example.com': 'gt-1', 'jian@example.com': 'jian-1' }
+  return m
+}
+const auths = (m: Machine) => m.sent.map(x => x.auth)
+
+test("/auth-here gives this session's model requests that account's token, and leaves the machine", async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  const r = await s.here('gt')
+  expect(r.text).toContain('This session now runs as gt (gt@example.com), alone')
+  expect(r.text).toContain('stay on jian')
+  expect(r.context?.[0]).toContain('"gt" with /auth-here')
+  await s.send()
+  await s.send()
+  expect(auths(m)).toEqual(['Bearer gt-1', 'Bearer gt-1'])
+  // Asked once, at the command; the requests reuse that token.
+  expect(m.asked).toEqual([['gt@example.com']])
+  expect(m.statusLine).toBe('Account: gt, this session only (/auth-here off)')
+  expect(m.store).toEqual({ 'here:session-1': { alias: 'gt', email: 'gt@example.com', org: null } })
+  expect(m.live()?.email).toBe('jian@example.com')
+  expect(changes(m)).toEqual([])
+})
+
+test('/auth-here leaves every other request as it is', async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.here('gt')
+  await s.send('https://api.anthropic.com/api/oauth/usage')
+  await s.send('https://example.com/v1/messages')
+  await s.send(MESSAGES, { 'x-api-key': OWN })
+  expect(auths(m)).toEqual([OWN, OWN, undefined])
+})
+
+test('a session without /auth-here sends its requests as they are', async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.start()
+  await s.send()
+  expect(auths(m)).toEqual([OWN])
+  expect(m.asked).toEqual([])
+  expect(m.statusLine).toBe(undefined)
+})
+
+test("/auth-here off puts the session back on the machine's login", async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.here('gt')
+  expect((await s.here('off')).text).toContain("back on the machine's login (jian); it ran as gt")
+  await s.send()
+  expect(auths(m)).toEqual([OWN])
+  expect(m.statusLine).toBe(undefined)
+  expect(m.store).toEqual({})
+  expect((await s.here('')).text).toContain("runs on the machine's login (jian)")
+  expect((await s.here('off')).text).toContain("already runs on the machine's login (jian)")
+})
+
+test('a resumed session keeps its account', async () => {
+  const m = jians()
+  m.store = { 'here:session-1': { alias: 'gt', email: 'gt@example.com', org: null } }
+  const s = sessionOn(m)
+  await s.start()
+  expect(m.statusLine).toBe('Account: gt, this session only (/auth-here off)')
+  await s.send()
+  expect(auths(m)).toEqual(['Bearer gt-1'])
+  expect((await s.here('')).text).toContain('runs as gt (gt@example.com) on its own')
+})
+
+test('while the machine is on that account the requests keep their own login; the session stays on it after', async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.here('gt')
+  // The machine moves to gt, so Claude Code holds that login: the requests keep their own.
+  expect((await s.auth('gt')).text).toContain('This session runs as gt on its own (/auth-here)')
+  await s.send()
+  // And back to jian: the session stays on gt.
+  await s.auth('jian')
+  await s.send()
+  expect(auths(m)).toEqual([OWN, 'Bearer gt-1'])
+  expect(m.live()?.email).toBe('jian@example.com')
+})
+
+test("/auth-here to the session's own account keeps it there when the machine switches", async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  expect((await s.here('jian')).text).toContain('This session stays on jian (jian@example.com) from now on')
+  expect(m.asked).toEqual([])
+  await s.send()
+  await s.auth('gt')
+  await s.send()
+  expect(auths(m)).toEqual([OWN, 'Bearer jian-1'])
+})
+
+test('a token the API refuses is refreshed once', async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.here('gt')
+  m.apiStatus = 401
+  await s.send()
+  m.apiStatus = 200
+  await s.send()
+  await s.send()
+  expect(auths(m)).toEqual(['Bearer gt-1', 'Bearer gt-2', 'Bearer gt-2'])
+  expect(m.asked).toEqual([['gt@example.com'], ['gt@example.com', '--refresh']])
+})
+
+test('requests at once wait on one ask', async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  m.store = { 'here:session-1': { alias: 'gt', email: 'gt@example.com', org: null } }
+  await s.start()
+  await Promise.all([s.send(), s.send(), s.send()])
+  expect(auths(m)).toEqual(['Bearer gt-1', 'Bearer gt-1', 'Bearer gt-1'])
+  expect(m.asked.length).toBe(1)
+})
+
+test('a login that is gone puts the session back on its own and says so', async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.here('gt')
+  m.apiStatus = 401
+  await s.send()
+  m.apiStatus = 200
+  m.tokenFails['gt@example.com'] = { error: 'its saved login has expired', dead: true }
+  await s.send()
+  await s.send()
+  expect(auths(m)).toEqual(['Bearer gt-1', OWN, OWN])
+  expect(m.toasts).toEqual([
+    "This session is back on its own login: gt's token can't be had here (its saved login has expired). /auth gt gives the steps to sign in.",
+  ])
+  expect(m.statusLine).toBe(undefined)
+  expect(m.store).toEqual({})
+})
+
+test("a token that can't be had this time keeps the account chosen, and isn't asked for again at once", async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.here('gt')
+  m.apiStatus = 401
+  await s.send()
+  m.apiStatus = 200
+  m.tokenFails['gt@example.com'] = { error: 'consume-busy' }
+  await s.send()
+  await s.send()
+  expect(auths(m)).toEqual(['Bearer gt-1', OWN, OWN])
+  expect(m.asked.length).toBe(2)
+  expect(m.toasts).toEqual(["For a minute this session runs on its own login: gt's token couldn't be had (consume-busy)."])
+  expect(m.statusLine).toBe('Account: gt, this session only (/auth-here off)')
+})
+
+test('/auth-here to an unknown, unsigned or expired account changes nothing', async () => {
+  const m = new Machine('jian@example.com')
+  m.saved = [
+    { number: 1, email: 'jian@example.com' },
+    { number: 2, email: 'ut@example.com', organizationUuid: UT_ORG, usageStatus: 'relogin_required' },
+  ]
+  const s = sessionOn(m)
+  expect((await s.here('nobody')).text).toContain('no account "nobody". Accounts: ut, gt, jian, sr.')
+  expect((await s.here('gt')).text).toContain("gt isn't signed in on this machine")
+  expect((await s.here('ut')).text).toContain("ut's login saved on this machine has expired")
+  m.saved.push({ number: 3, email: 'gt@example.com' })
+  expect((await s.here('gt')).text).toContain("Not switching: gt's token couldn't be had (cswap has no login saved for it here)")
+  await s.send()
+  expect(auths(m)).toEqual([OWN])
+  expect(m.statusLine).toBe(undefined)
+  expect(m.store).toEqual({})
+})
+
+test('./token runs from the mod folder with the session variables unset', async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.here('GT')
+  expect(m.started.find(a => a.includes('python3'))).toEqual([...UNSET, 'python3', `${HOME}/.claude/mods/accounts/token`, 'gt@example.com'])
+  expect((await s.auth('')).text).toContain('This session runs as gt on its own (/auth-here)')
+})
+
+test('the registered /auth-here answers at the prompt', async ($, on) => {
+  const m = jians()
+  m.engine(on)
+  const { text } = (await $.command.run(typedHere(''))) as { text: string }
+  expect(text).toContain("This session runs on the machine's login (jian)")
 })

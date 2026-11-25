@@ -14,6 +14,10 @@
 //   in, and /auth to it afterwards saves the new login (`cswap add` updates an
 //   account's slot in place). Signing in writes over the machine's login
 //   without keeping a copy, so /auth updates cswap's copy of it first.
+// - /auth-here <alias> runs this session alone as that account, leaving the
+//   machine and its other sessions as they are; /auth-here off ends it. Its
+//   model requests carry the token of the login cswap keeps for the account
+//   (see /auth-here below).
 //
 // The account table is ~/.config/claude-accounts/accounts.json, the file the
 // Zen mod reads: {"accounts": [{"alias": "gt", "email": "...", "org": "..."}]}.
@@ -24,7 +28,7 @@
 //
 // One file on purpose: the servers run older builds of Claude Code than this
 // Mac, and every one of them loads a single-file module.
-import type { EngineInterface, Register } from 'claude-code'
+import type { Args, EngineInterface, Next, Register } from 'claude-code'
 
 export type Entry = { alias: string; email: string | null; org: string | null }
 export type Live = { email: string; org: string | null }
@@ -218,13 +222,14 @@ async function ownLoginNote($: EngineInterface, accounts: Entry[], machine: Live
   return `This session has a login of its own (CLAUDE_CONFIG_DIR, as \`cswap run\` sets), so it stays on ${name}.`
 }
 
-async function auth($: EngineInterface, wanted: string): Promise<{ text: string; context?: string[] }> {
+/** /auth <wanted>; `mine`: this session's /auth-here, for what its answers say about it. */
+export async function auth($: EngineInterface, wanted: string, mine?: HereState): Promise<Said> {
   const accounts = await table($)
   const live = await machineAccount($)
   let saved = await savedAccounts($)
   if (!wanted) {
     const note = await ownLoginNote($, accounts, live)
-    return { text: [listing(accounts, saved, live), ...(note ? [note] : [])].join('\n') }
+    return { text: [listing(accounts, saved, live), ...(note ? [note] : []), ...hereNote(mine)].join('\n') }
   }
 
   const lower = wanted.toLowerCase()
@@ -291,28 +296,262 @@ async function auth($: EngineInterface, wanted: string): Promise<{ text: string;
   lines.push(`Switched this machine to ${name} (${target.email}). Running sessions here pick it up within about 30 seconds; new ones start on it.`)
   const note = await ownLoginNote($, accounts, await machineAccount($))
   if (note) lines.push(note)
+  lines.push(...hereNote(mine))
+  // The machine moved: the session's own login is read again at its next request.
+  if (mine) mine.ownSeen = null
   return { text: lines.join('\n'), context: [`The person switched this machine's Claude account to "${name}" with /auth.`] }
+}
+
+// --- /auth-here --------------------------------------------------------------
+//
+// /auth-here <alias> runs this session alone as another account, for when moving
+// the whole machine would move every other session with it. An http.fetch hook
+// puts that account's token on each model request the engine sends to
+// Anthropic's API, its subagents' included. The token is that of the login cswap
+// keeps for the account, the one `cswap switch` would put on the machine; ./token
+// reads it through cswap's own code and refreshes it near its expiry through
+// cswap's gate. A refresh token works once, so a login has one keeper: cswap for
+// its saved copy, Claude Code for the machine's own. So while the session's own
+// login is that account (the machine switched to it), the requests keep their
+// own token. The choice is kept per session id ($.store): a resume or a respawn
+// keeps it, /auth-here off ends it. A request never waits on a token that can't
+// be had: it goes with the session's own login, and the session says so.
+
+/** The account /auth-here runs a session as. */
+export type Here = { alias: string; email: string; org: string | null }
+/** What ./token answers. */
+type Answer = { token?: string; expiresAt?: number; active?: boolean; error?: string; dead?: boolean }
+/** What a command answers. */
+type Said = { text: string; context?: string[] }
+
+/** Model requests to Anthropic's own API: the only ones given another token. */
+export const MODEL_URL = /^https:\/\/api\.anthropic\.com\/v1\/messages(?:[/?#]|$)/
+// A token is used until this close to its expiry: inside cswap's own margin (5
+// minutes), so asking for it then refreshes it.
+const MARGIN = 4 * 60_000
+// How long the session's own login, read from its config file, stands.
+const OWN_TTL = 10_000
+// After a token couldn't be had, the session's own login carries its requests this long.
+const RETRY = 60_000
+
+const hereKey = (id: string) => `here:${id}`
+
+/** Asks ./token for the account's token; `refresh` after the API refused the last one. */
+async function askToken($: EngineInterface, h: Here, refresh: boolean): Promise<Answer> {
+  let root = ''
+  try {
+    root = $.plugin.root
+  } catch {
+    // An older build: where install.sh puts the mod.
+  }
+  root ||= `${await home($)}/.claude/mods/accounts`
+  const argv = [...UNSET, 'python3', `${root}/token`, h.email, ...(h.org ? [h.org] : []), ...(refresh ? ['--refresh'] : [])]
+  const r = await $.process.run(argv, { timeoutMs: 30_000 })
+  try {
+    return JSON.parse(r.stdout.trim().split('\n').pop() ?? '') as Answer
+  } catch {
+    return { error: (r.stderr.trim().split('\n').pop() || `./token ended with ${r.exitCode}`).slice(0, 300) }
+  }
+}
+
+/** /auth-here in one session: the account it runs as and the token on hand. */
+export type HereState = {
+  here: Here | null
+  token: { alias: string; value: string; expiresAt: number } | null
+  /** The API refused the token on hand, so the next one asked for is a refreshed one. */
+  refused: boolean
+  asking: Promise<string | null> | null
+  failedAt: number
+  ownSeen: { at: number; login: Live | null } | null
+}
+
+export const newHereState = (): HereState => ({ here: null, token: null, refused: false, asking: null, failedAt: 0, ownSeen: null })
+
+/** What /auth's answers add while the session runs on its own. */
+function hereNote(st: HereState | undefined): string[] {
+  const h = st?.here
+  return h ? [`This session runs as ${h.alias} on its own (/auth-here), whatever the machine is on; /auth-here off makes it follow the machine.`] : []
+}
+
+async function ownLogin($: EngineInterface, st: HereState): Promise<Live | null> {
+  if (!st.ownSeen || Date.now() - st.ownSeen.at > OWN_TTL) st.ownSeen = { at: Date.now(), login: await sessionAccount($) }
+  return st.ownSeen.login
+}
+
+function show($: EngineInterface, st: HereState) {
+  $.ui.status(st.here ? `Account: ${st.here.alias}, this session only (/auth-here off)` : undefined)
+}
+
+async function setHere($: EngineInterface, st: HereState, next: Here | null) {
+  st.here = next
+  st.token = null
+  st.refused = false
+  st.failedAt = 0
+  const key = hereKey(await $.session.id())
+  if (next) await $.store.set(key, next)
+  else await $.store.delete(key)
+  show($, st)
+}
+
+function keep(st: HereState, h: Here, token: string, expiresAt: number | undefined): string {
+  st.token = { alias: h.alias, value: token, expiresAt: typeof expiresAt === 'number' ? expiresAt : Date.now() + 60 * 60_000 }
+  return token
+}
+
+async function fetchToken($: EngineInterface, st: HereState, h: Here): Promise<string | null> {
+  const a = await askToken($, h, st.refused)
+  st.refused = false
+  if (st.here !== h || a.active) return null
+  if (a.token) return keep(st, h, a.token, a.expiresAt)
+  const why = a.error ?? 'no answer'
+  if (a.dead) {
+    await setHere($, st, null)
+    $.ui.toast(`This session is back on its own login: ${h.alias}'s token can't be had here (${why}). /auth ${h.alias} gives the steps to sign in.`)
+  } else {
+    st.failedAt = Date.now()
+    $.ui.toast(`For a minute this session runs on its own login: ${h.alias}'s token couldn't be had (${why}).`)
+  }
+  return null
+}
+
+/** The token this session's model requests carry; null: their own. */
+async function tokenNow($: EngineInterface, st: HereState): Promise<string | null> {
+  const h = st.here
+  if (!h || Date.now() - st.failedAt < RETRY) return null
+  if (same(await ownLogin($, st), { email: h.email, org: h.org })) return null
+  const t = st.token
+  if (t?.alias === h.alias && !st.refused && t.expiresAt - Date.now() > MARGIN) return t.value
+  if (!st.asking) st.asking = fetchToken($, st, h).finally(() => (st.asking = null))
+  return st.asking
+}
+
+/** At session start: the account kept for this session id, if any. */
+export async function hereStart($: EngineInterface, st: HereState) {
+  const kept = (await $.store.get(hereKey(await $.session.id()))) as Partial<Here> | undefined
+  st.here =
+    typeof kept?.alias === 'string' && typeof kept.email === 'string'
+      ? { alias: kept.alias, email: kept.email, org: typeof kept.org === 'string' ? kept.org : null }
+      : null
+  show($, st)
+}
+
+/** /auth-here <wanted>. */
+export async function authHere($: EngineInterface, st: HereState, wanted: string): Promise<Said> {
+  const accounts = await table($)
+  const own = await sessionAccount($)
+  st.ownSeen = { at: Date.now(), login: own }
+  const ownName = own ? (aliasOf(accounts, own) ?? own.email) : 'no login'
+  const base = (await ownConfigDir($)) ? 'its own login' : "the machine's login"
+  if (!wanted) {
+    return {
+      text: st.here
+        ? `This session runs as ${st.here.alias} (${st.here.email}) on its own; ${base} is ${ownName}. /auth-here off puts it back.`
+        : `This session runs on ${base} (${ownName}). /auth-here <alias> runs it alone as another account, leaving the machine and its other sessions as they are.`,
+    }
+  }
+  if (/^(off|-)$/i.test(wanted)) {
+    if (!st.here) return { text: `This session already runs on ${base} (${ownName}).` }
+    const was = st.here.alias
+    await setHere($, st, null)
+    return {
+      text: `This session is back on ${base} (${ownName}); it ran as ${was}.`,
+      context: [`The person put this session back on ${base}, the Claude account "${ownName}", with /auth-here off. It ran as "${was}".`],
+    }
+  }
+
+  const lower = wanted.toLowerCase()
+  const entry = accounts.find(a => a.alias.toLowerCase() === lower) ?? null
+  const saved = await savedAccounts($)
+  const slot = entry?.email ? savedFor(saved, entry.email, entry.org) : (saved.find(s => s.alias?.toLowerCase() === lower) ?? null)
+  if (!entry && !slot) {
+    const known = accounts.map(a => a.alias).join(', ') || `none: write ~/${TABLE}`
+    return { text: `/auth-here: no account "${wanted}". Accounts: ${known}.` }
+  }
+  const name = entry?.alias ?? wanted
+  const email = (entry?.email ?? slot?.email ?? '').toLowerCase()
+  if (!email || !slot) return { text: `${name} isn't signed in on this machine: cswap has no login for it. /auth ${name} gives the steps to sign in.` }
+  if (expired(slot)) return { text: `${name}'s login saved on this machine has expired. /auth ${name} gives the steps to sign in again.` }
+
+  const h: Here = { alias: name, email, org: entry?.org ?? slot.organizationUuid?.toLowerCase() ?? null }
+  const isOwn = same(own, { email: h.email, org: h.org })
+  // Asked now, so a token that can't be had is said here, not at the next request.
+  const first = isOwn ? null : await askToken($, h, false)
+  if (first && !first.token && !first.active) return { text: `Not switching: ${name}'s token couldn't be had (${first.error ?? 'no answer'}).` }
+  await setHere($, st, h)
+  if (first?.token) keep(st, h, first.token, first.expiresAt)
+  const machine = await machineAccount($)
+  const machineName = machine ? (aliasOf(accounts, machine) ?? machine.email) : 'no login'
+  return {
+    text: isOwn
+      ? `This session stays on ${name} (${email}) from now on, even when the machine switches. /auth-here off makes it follow ${base} again.`
+      : `This session now runs as ${name} (${email}), alone: the machine and its other sessions stay on ${machineName}. /auth-here off puts it back.`,
+    context: [`The person switched this session's Claude account to "${name}" with /auth-here. The machine and its other sessions stay on "${machineName}".`],
+  }
+}
+
+/** The http.fetch hook: each model request the engine sends, once per send, with
+ *  /auth-here on carries that account's token in place of the session's own. */
+export async function hereFetch($: EngineInterface, st: HereState, e: Args<'http.fetch'>, next: Next<'http.fetch'>) {
+  if (!st.here || next.origin.plugin !== 'engine' || !MODEL_URL.test(e.url)) return next(e)
+  const headers = e.init?.headers ?? {}
+  // A login's request: one with an API key is left as it is.
+  const key = Object.keys(headers).find(k => k.toLowerCase() === 'authorization')
+  if (!key) return next(e)
+  let bearer: string | null = null
+  try {
+    bearer = await tokenNow($, st)
+  } catch {
+    bearer = null
+  }
+  if (!bearer) return next(e)
+  const r = await next({ ...e, init: { ...e.init, headers: { ...headers, [key]: `Bearer ${bearer}` } } })
+  if ('value' in r && r.value?.status === 401 && st.token?.value === bearer) st.refused = true
+  return r
 }
 
 // --- Hooks -------------------------------------------------------------------
 
 export const register: Register = on => {
+  const mine = newHereState()
+
   on('session.start', async ($, e, next) => {
     await $.command.register({
       name: 'auth',
       description: "Switch this machine's Claude account (cswap); alone, list the accounts",
       argumentHint: '[alias]',
     })
+    await $.command.register({
+      name: 'auth-here',
+      description: "Run this session alone as another Claude account; off: back to the machine's",
+      argumentHint: '[alias|off]',
+    })
+    try {
+      await hereStart($, mine)
+    } catch {
+      // An older build without $.session.id or $.store: no account kept.
+    }
     return next(e)
   })
 
   on('command.run', { command: 'auth' }, async ($, e) => {
     try {
-      return await auth($, e.args.trim())
+      return await auth($, e.args.trim(), mine)
     } catch (err) {
       return { text: `/auth: ${message(err)}` }
     }
   })
+
+  on('command.run', { command: 'auth-here' }, async ($, e) => {
+    try {
+      return await authHere($, mine, e.args.trim())
+    } catch (err) {
+      return { text: `/auth-here: ${message(err)}` }
+    }
+  })
+
+  // Each model request the engine sends, once per send: with /auth-here on, it
+  // carries that account's token in place of the session's own.
+  on('http.fetch', ($, e, next) => hereFetch($, mine, e, next))
 
   // Missing table entries are said once per session, not at every publish.
   let toldMissing = false
