@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The access token of one Claude account's login as cswap keeps it, for /auth-here.
+"""The access token of one Claude account's login as cswap keeps it, for /auth.
 
     ~/.claude/mods/accounts/token <email> [<organization>] [--refresh]
 

@@ -1,5 +1,5 @@
 {
   "name": "accounts",
   "version": "0.1.0",
-  "description": "Tags each artifact link with the Claude account that published it, for the Zen mod to open it in that account; /auth <alias> switches this machine's account with cswap"
+  "description": "Tags each artifact link with the Claude account that published it, for the Zen mod to open it in that account; /auth <alias> switches this session's Claude account, /auth-all the whole machine's (cswap)"
 }

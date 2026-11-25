@@ -1,13 +1,13 @@
-// Artifact links tagged with the account that published them, /auth
-// switching the machine's account through cswap without losing a login, and
-// /auth-here running one session alone as another account.
+// Artifact links tagged with the account that published them, /auth running
+// one session as another account, and /auth-all switching the machine's
+// account through cswap without losing a login.
 import type { EngineInterface, Next, On } from 'claude-code'
 import { expect, test } from 'claude-code/testing'
-import { aliasOf, auth, authHere, entries, hereFetch, hereStart, newHereState, tag, UNSET } from '../hooks/register'
+import { aliasOf, authAll, authSession, entries, newSessionState, sessionFetch, sessionStart, sessionStop, tag, UNSET } from '../hooks/register'
 
-/** /auth as typed at the prompt. */
-const typed = (args: string) =>
-  ({ command: 'auth', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as const
+/** /auth-all as typed at the prompt. */
+const typedAll = (args: string) =>
+  ({ command: 'auth-all', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as const
 
 const HOME = '/home/me'
 const UT_ORG = 'aaaaaaaa-0000-4000-8000-000000000001'
@@ -106,7 +106,7 @@ class Machine {
     return this.cswap(args)
   }
 
-  /** The mod's $ on this machine, for calling its /auth-here functions directly: a
+  /** The mod's $ on this machine, for calling its /auth functions directly: a
    *  test can't send a model request as the engine does. */
   fake(): EngineInterface {
     const self = this
@@ -267,14 +267,14 @@ test('reading or listing artifacts adds nothing', async ($, on) => {
   expect(m.logs).toEqual([])
 })
 
-test('/auth alone lists the accounts and their state', async ($, on) => {
+test('/auth-all alone lists the accounts and their state', async ($, on) => {
   const m = new Machine('jian@example.com')
   m.saved = [
     { number: 1, email: 'ut@example.com', organizationUuid: UT_ORG, usageStatus: 'relogin_required' },
     { number: 2, email: 'gt@example.com' },
   ]
   m.engine(on)
-  const { text } = await $.command.run(typed(''))
+  const { text } = await $.command.run(typedAll(''))
   expect(text).toContain('(now jian)')
   expect(text).toMatch(/ut\s+ut@example\.com\s+login expired/)
   expect(text).toMatch(/gt\s+gt@example\.com\s+ready/)
@@ -284,11 +284,11 @@ test('/auth alone lists the accounts and their state', async ($, on) => {
   expect(m.runs).toEqual([['list', '--json']])
 })
 
-test('/auth saves an unsaved login before switching away from it', async ($, on) => {
+test('/auth-all saves an unsaved login before switching away from it', async ($, on) => {
   const m = new Machine('jian@example.com')
   m.saved = [{ number: 1, email: 'gt@example.com' }]
   m.engine(on)
-  const { text } = await $.command.run(typed('gt'))
+  const { text } = await $.command.run(typedAll('gt'))
   expect(text).toContain('Saved the current login (jian)')
   expect(text).toContain('Switched this machine to gt')
   expect(changes(m)).toEqual([['add'], ['switch', '1']])
@@ -296,15 +296,15 @@ test('/auth saves an unsaved login before switching away from it', async ($, on)
   expect(m.saved.some(s => s.email === 'jian@example.com')).toBe(true)
 })
 
-test('/auth runs cswap with the session variables unset', async ($, on) => {
+test('/auth-all runs cswap with the session variables unset', async ($, on) => {
   const m = new Machine('gt@example.com')
   m.saved = [{ number: 1, email: 'gt@example.com' }]
   m.engine(on)
-  await $.command.run(typed(''))
+  await $.command.run(typedAll(''))
   expect(m.started[0]).toEqual(['env', '-u', 'CLAUDE_CONFIG_DIR', '-u', 'CLAUDE_SECURESTORAGE_CONFIG_DIR', 'cswap', 'list', '--json'])
 })
 
-test('/auth from a cswap run session switches the machine and says the session stays', async ($, on) => {
+test('/auth-all from a cswap run session switches the machine and says the session stays', async ($, on) => {
   const m = new Machine('gt@example.com')
   m.ownLogin('ut@example.com', UT_ORG)
   m.saved = [
@@ -313,44 +313,44 @@ test('/auth from a cswap run session switches the machine and says the session s
     { number: 3, email: 'jian@example.com' },
   ]
   m.engine(on)
-  const listed = (await $.command.run(typed(''))).text
+  const listed = (await $.command.run(typedAll(''))).text
   expect(listed).toContain('(now gt)')
   expect(listed).toContain('so it stays on ut')
   expect(listed).not.toContain('signin')
-  const { text } = await $.command.run(typed('jian'))
+  const { text } = await $.command.run(typedAll('jian'))
   expect(text).toContain('Switched this machine to jian')
   expect(text).toContain('so it stays on ut')
   expect(changes(m)).toEqual([['switch', '3']])
   expect(m.live()?.email).toBe('jian@example.com')
 })
 
-test('/auth finds cswap in ~/.local/bin, and says how to install it when it is nowhere', async ($, on) => {
+test('/auth-all finds cswap in ~/.local/bin, and says how to install it when it is nowhere', async ($, on) => {
   const m = new Machine('gt@example.com')
   m.saved = [{ number: 1, email: 'gt@example.com' }, { number: 2, email: 'jian@example.com' }]
   m.cswapAt = 'local'
   m.engine(on)
-  expect((await $.command.run(typed('jian'))).text).toContain('Switched this machine to jian')
+  expect((await $.command.run(typedAll('jian'))).text).toContain('Switched this machine to jian')
   m.cswapAt = 'none'
-  expect((await $.command.run(typed('gt'))).text).toContain("cswap isn't installed here (uv tool install claude-swap)")
+  expect((await $.command.run(typedAll('gt'))).text).toContain("cswap isn't installed here (uv tool install claude-swap)")
 })
 
-test('/auth to an expired or missing login says how to sign in', async ($, on) => {
+test('/auth-all to an expired or missing login says how to sign in', async ($, on) => {
   const m = new Machine('gt@example.com')
   m.saved = [
     { number: 1, email: 'gt@example.com' },
     { number: 2, email: 'ut@example.com', organizationUuid: UT_ORG, usageStatus: 'relogin_required' },
   ]
   m.engine(on)
-  const expiredText = (await $.command.run(typed('ut'))).text
+  const expiredText = (await $.command.run(typedAll('ut'))).text
   expect(expiredText).toContain('has expired')
   expect(expiredText).toContain('claude auth login --email ut@example.com')
-  const missing = (await $.command.run(typed('jian'))).text
+  const missing = (await $.command.run(typedAll('jian'))).text
   expect(missing).toContain("isn't saved on this machine yet")
   // Each time, the current login is saved again first: the sign-in writes over it.
   expect(changes(m)).toEqual([['add'], ['add']])
 })
 
-test('/auth keeps each new sign-in, so signing in to the next account cannot lose it', async ($, on) => {
+test('/auth-all keeps each new sign-in, so signing in to the next account cannot lose it', async ($, on) => {
   // ut and gt were saved long ago and have expired; the machine is on jian, which cswap doesn't have.
   const m = new Machine('jian@example.com')
   m.saved = [
@@ -358,52 +358,54 @@ test('/auth keeps each new sign-in, so signing in to the next account cannot los
     { number: 2, email: 'gt@example.com', usageStatus: 'relogin_required', creds: 'dead' },
   ]
   m.engine(on)
-  expect((await $.command.run(typed('ut'))).text).toContain('claude auth login --email ut@example.com')
+  expect((await $.command.run(typedAll('ut'))).text).toContain('claude auth login --email ut@example.com')
   m.signIn('ut@example.com', UT_ORG)
   const ut = m.liveCreds
-  const saved = (await $.command.run(typed('ut'))).text
+  const saved = (await $.command.run(typedAll('ut'))).text
   expect(saved).toContain('Already on ut')
   expect(saved).toContain('Saved this login in cswap')
-  expect((await $.command.run(typed('gt'))).text).toContain('claude auth login --email gt@example.com')
+  expect((await $.command.run(typedAll('gt'))).text).toContain('claude auth login --email gt@example.com')
   m.signIn('gt@example.com')
-  await $.command.run(typed('gt'))
-  expect((await $.command.run(typed('ut'))).text).toContain('Switched this machine to ut')
+  await $.command.run(typedAll('gt'))
+  expect((await $.command.run(typedAll('ut'))).text).toContain('Switched this machine to ut')
   expect(m.liveCreds).toBe(ut)
-  expect((await $.command.run(typed('jian'))).text).toContain('Switched this machine to jian')
+  expect((await $.command.run(typedAll('jian'))).text).toContain('Switched this machine to jian')
   expect(m.liveCreds).toBe('login-0')
 })
 
-test('/auth to the current account saves its login again; to an unknown one changes nothing', async ($, on) => {
+test('/auth-all to the current account saves its login again; to an unknown one changes nothing', async ($, on) => {
   const m = new Machine('gt@example.com')
   m.saved = [{ number: 1, email: 'gt@example.com' }]
   m.engine(on)
-  expect((await $.command.run(typed('GT'))).text).toContain('Already on gt')
-  expect((await $.command.run(typed('nobody'))).text).toContain('no account "nobody"')
+  expect((await $.command.run(typedAll('GT'))).text).toContain('Already on gt')
+  expect((await $.command.run(typedAll('nobody'))).text).toContain('no account "nobody"')
   expect(changes(m)).toEqual([['add']])
   expect(m.live()?.email).toBe('gt@example.com')
 })
 
-// --- /auth-here -------------------------------------------------------------
+// --- /auth: one session ----------------------------------------------------
 
-/** /auth-here as typed at the prompt. */
-const typedHere = (args: string) =>
-  ({ command: 'auth-here', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as const
+/** /auth as typed at the prompt. */
+const typedAuth = (args: string) =>
+  ({ command: 'auth', args, origin: { kind: 'composer' }, presentation: { isFullscreen: false, columns: 120 } }) as const
 
 const MESSAGES = 'https://api.anthropic.com/v1/messages?beta=true'
 /** What a model request carries on the session's own login. */
 const OWN = '[redacted]'
 
-/** A session on machine m, driven as its hooks drive the mod: its commands, its
- *  start, and its model requests (`send`, with the credential as the engine shows it). */
+/** A session on machine m, driven as its hooks drive the mod: its commands
+ *  (/auth, and /auth-all as `all`), its start, its model requests (`send`, with
+ *  the credential as the engine shows it) and the end of a turn (`stop`). */
 function sessionOn(m: Machine) {
-  const st = newHereState()
+  const st = newSessionState()
   const $ = m.fake()
   return {
-    here: (args: string) => authHere($, st, args),
-    auth: (args: string) => auth($, args, st),
-    start: () => hereStart($, st),
+    auth: (args: string) => authSession($, st, args),
+    all: (args: string) => authAll($, args, st),
+    start: () => sessionStart($, st),
     send: (url = MESSAGES, headers: Record<string, string> = { authorization: OWN }) =>
-      hereFetch($, st, { url, init: { method: 'POST', headers: { 'anthropic-beta': 'oauth-2025-04-20', ...headers }, body: '{}' } }, m.network()),
+      sessionFetch($, st, { url, init: { method: 'POST', headers: { 'anthropic-beta': 'oauth-2025-04-20', ...headers }, body: '{}' } }, m.network()),
+    stop: () => sessionStop($, st),
   }
 }
 
@@ -416,35 +418,35 @@ function jians() {
 }
 const auths = (m: Machine) => m.sent.map(x => x.auth)
 
-test("/auth-here gives this session's model requests that account's token, and leaves the machine", async () => {
+test("/auth gives this session's model requests that account's token, and leaves the machine", async () => {
   const m = jians()
   const s = sessionOn(m)
-  const r = await s.here('gt')
-  expect(r.text).toContain('This session now runs as gt (gt@example.com), alone')
+  const r = await s.auth('gt')
+  expect(r.text).toContain('This session now runs as gt (gt@example.com); the machine')
   expect(r.text).toContain('stay on jian')
-  expect(r.context?.[0]).toContain('"gt" with /auth-here')
+  expect(r.context?.[0]).toContain('"gt" with /auth.')
   await s.send()
   await s.send()
   expect(auths(m)).toEqual(['Bearer gt-1', 'Bearer gt-1'])
   // Asked once, at the command; the requests reuse that token.
   expect(m.asked).toEqual([['gt@example.com']])
-  expect(m.statusLine).toBe('Account: gt, this session only (/auth-here off)')
-  expect(m.store).toEqual({ 'here:session-1': { alias: 'gt', email: 'gt@example.com', org: null } })
+  expect(m.statusLine).toBe('Account: gt, this session only (/auth off)')
+  expect(m.store).toEqual({ 'session:session-1': { alias: 'gt', email: 'gt@example.com', org: null } })
   expect(m.live()?.email).toBe('jian@example.com')
   expect(changes(m)).toEqual([])
 })
 
-test('/auth-here leaves every other request as it is', async () => {
+test('/auth leaves every other request as it is', async () => {
   const m = jians()
   const s = sessionOn(m)
-  await s.here('gt')
+  await s.auth('gt')
   await s.send('https://api.anthropic.com/api/oauth/usage')
   await s.send('https://example.com/v1/messages')
   await s.send(MESSAGES, { 'x-api-key': OWN })
   expect(auths(m)).toEqual([OWN, OWN, undefined])
 })
 
-test('a session without /auth-here sends its requests as they are', async () => {
+test('a session without /auth sends its requests as they are', async () => {
   const m = jians()
   const s = sessionOn(m)
   await s.start()
@@ -454,51 +456,52 @@ test('a session without /auth-here sends its requests as they are', async () => 
   expect(m.statusLine).toBe(undefined)
 })
 
-test("/auth-here off puts the session back on the machine's login", async () => {
+test("/auth off puts the session back on the machine's login", async () => {
   const m = jians()
   const s = sessionOn(m)
-  await s.here('gt')
-  expect((await s.here('off')).text).toContain("back on the machine's login (jian); it ran as gt")
+  await s.auth('gt')
+  expect((await s.auth('off')).text).toContain("back on the machine's login (jian); it ran as gt")
   await s.send()
   expect(auths(m)).toEqual([OWN])
   expect(m.statusLine).toBe(undefined)
   expect(m.store).toEqual({})
-  expect((await s.here('')).text).toContain("runs on the machine's login (jian)")
-  expect((await s.here('off')).text).toContain("already runs on the machine's login (jian)")
+  expect((await s.auth('')).text).toContain('Claude accounts on this machine (now jian)')
+  expect((await s.auth('')).text).not.toContain('on its own')
+  expect((await s.auth('off')).text).toContain("already runs on the machine's login (jian)")
 })
 
 test('a resumed session keeps its account', async () => {
   const m = jians()
-  m.store = { 'here:session-1': { alias: 'gt', email: 'gt@example.com', org: null } }
+  m.store = { 'session:session-1': { alias: 'gt', email: 'gt@example.com', org: null } }
   const s = sessionOn(m)
   await s.start()
-  expect(m.statusLine).toBe('Account: gt, this session only (/auth-here off)')
+  expect(m.statusLine).toBe('Account: gt, this session only (/auth off)')
   await s.send()
   expect(auths(m)).toEqual(['Bearer gt-1'])
-  expect((await s.here('')).text).toContain('runs as gt (gt@example.com) on its own')
+  expect((await s.auth('')).text).toContain('This session runs as gt on its own (/auth)')
 })
 
 test('while the machine is on that account the requests keep their own login; the session stays on it after', async () => {
   const m = jians()
   const s = sessionOn(m)
-  await s.here('gt')
+  await s.auth('gt')
   // The machine moves to gt, so Claude Code holds that login: the requests keep their own.
-  expect((await s.auth('gt')).text).toContain('This session runs as gt on its own (/auth-here)')
+  expect((await s.all('gt')).text).toContain('This session runs as gt on its own (/auth)')
   await s.send()
   // And back to jian: the session stays on gt.
-  await s.auth('jian')
+  await s.all('jian')
   await s.send()
   expect(auths(m)).toEqual([OWN, 'Bearer gt-1'])
   expect(m.live()?.email).toBe('jian@example.com')
 })
 
-test("/auth-here to the session's own account keeps it there when the machine switches", async () => {
+test("/auth to the session's own account keeps it there when the machine switches", async () => {
   const m = jians()
   const s = sessionOn(m)
-  expect((await s.here('jian')).text).toContain('This session stays on jian (jian@example.com) from now on')
+  expect((await s.auth('jian')).text).toContain('This session stays on jian (jian@example.com) from now on')
   expect(m.asked).toEqual([])
   await s.send()
-  await s.auth('gt')
+  await s.all('gt')
   await s.send()
   expect(auths(m)).toEqual([OWN, 'Bearer jian-1'])
 })
@@ -506,7 +509,7 @@ test("/auth-here to the session's own account keeps it there when the machine sw
 test('a token the API refuses is refreshed once', async () => {
   const m = jians()
   const s = sessionOn(m)
-  await s.here('gt')
+  await s.auth('gt')
   m.apiStatus = 401
   await s.send()
   m.apiStatus = 200
@@ -519,7 +522,7 @@ test('a token the API refuses is refreshed once', async () => {
 test('requests at once wait on one ask', async () => {
   const m = jians()
   const s = sessionOn(m)
-  m.store = { 'here:session-1': { alias: 'gt', email: 'gt@example.com', org: null } }
+  m.store = { 'session:session-1': { alias: 'gt', email: 'gt@example.com', org: null } }
   await s.start()
   await Promise.all([s.send(), s.send(), s.send()])
   expect(auths(m)).toEqual(['Bearer gt-1', 'Bearer gt-1', 'Bearer gt-1'])
@@ -529,7 +532,7 @@ test('requests at once wait on one ask', async () => {
 test('a login that is gone puts the session back on its own and says so', async () => {
   const m = jians()
   const s = sessionOn(m)
-  await s.here('gt')
+  await s.auth('gt')
   m.apiStatus = 401
   await s.send()
   m.apiStatus = 200
@@ -538,7 +541,7 @@ test('a login that is gone puts the session back on its own and says so', async 
   await s.send()
   expect(auths(m)).toEqual(['Bearer gt-1', OWN, OWN])
   expect(m.toasts).toEqual([
-    "This session is back on its own login: gt's token can't be had here (its saved login has expired). /auth gt gives the steps to sign in.",
+    "This session is back on its own login: gt's token can't be had here (its saved login has expired). To sign gt in again, run ~/.claude/mods/accounts/signin gt in a terminal on this machine.",
   ])
   expect(m.statusLine).toBe(undefined)
   expect(m.store).toEqual({})
@@ -547,7 +550,7 @@ test('a login that is gone puts the session back on its own and says so', async 
 test("a token that can't be had this time keeps the account chosen, and isn't asked for again at once", async () => {
   const m = jians()
   const s = sessionOn(m)
-  await s.here('gt')
+  await s.auth('gt')
   m.apiStatus = 401
   await s.send()
   m.apiStatus = 200
@@ -557,38 +560,65 @@ test("a token that can't be had this time keeps the account chosen, and isn't as
   expect(auths(m)).toEqual(['Bearer gt-1', OWN, OWN])
   expect(m.asked.length).toBe(2)
   expect(m.toasts).toEqual(["For a minute this session runs on its own login: gt's token couldn't be had (consume-busy)."])
-  expect(m.statusLine).toBe('Account: gt, this session only (/auth-here off)')
+  expect(m.statusLine).toBe('Account: gt, this session only (/auth off)')
 })
 
-test('/auth-here to an unknown, unsigned or expired account changes nothing', async () => {
+test('/auth to an unknown, unsigned or expired account changes nothing', async () => {
   const m = new Machine('jian@example.com')
   m.saved = [
     { number: 1, email: 'jian@example.com' },
     { number: 2, email: 'ut@example.com', organizationUuid: UT_ORG, usageStatus: 'relogin_required' },
   ]
   const s = sessionOn(m)
-  expect((await s.here('nobody')).text).toContain('no account "nobody". Accounts: ut, gt, jian, sr.')
-  expect((await s.here('gt')).text).toContain("gt isn't signed in on this machine")
-  expect((await s.here('ut')).text).toContain("ut's login saved on this machine has expired")
+  expect((await s.auth('nobody')).text).toContain('no account "nobody". Accounts: ut, gt, jian, sr.')
+  expect((await s.auth('gt')).text).toContain("gt isn't signed in on this machine yet. To sign it in, run ~/.claude/mods/accounts/signin gt")
+  expect((await s.auth('ut')).text).toContain("ut's login saved on this machine has expired")
   m.saved.push({ number: 3, email: 'gt@example.com' })
-  expect((await s.here('gt')).text).toContain("Not switching: gt's token couldn't be had (cswap has no login saved for it here)")
+  expect((await s.auth('gt')).text).toContain("Not switching: gt's token couldn't be had (cswap has no login saved for it here)")
   await s.send()
   expect(auths(m)).toEqual([OWN])
   expect(m.statusLine).toBe(undefined)
   expect(m.store).toEqual({})
 })
 
-test('./token runs from the mod folder with the session variables unset', async () => {
+test('./token runs from the mod folder with the session variables unset, and /auth-all lists the session on its own', async () => {
   const m = jians()
   const s = sessionOn(m)
-  await s.here('GT')
+  await s.auth('GT')
   expect(m.started.find(a => a.includes('python3'))).toEqual([...UNSET, 'python3', `${HOME}/.claude/mods/accounts/token`, 'gt@example.com'])
-  expect((await s.auth('')).text).toContain('This session runs as gt on its own (/auth-here)')
+  expect((await s.all('')).text).toContain('This session runs as gt on its own (/auth)')
 })
 
-test('the registered /auth-here answers at the prompt', async ($, on) => {
+test('the registered /auth and /auth-all answer at the prompt', async ($, on) => {
   const m = jians()
   m.engine(on)
-  const { text } = (await $.command.run(typedHere(''))) as { text: string }
-  expect(text).toContain("This session runs on the machine's login (jian)")
+  const { text } = (await $.command.run(typedAuth(''))) as { text: string }
+  expect(text).toContain('Claude accounts on this machine (now jian)')
+  expect(text).toContain('/auth <alias> switches this session to that account; /auth-all <alias> switches the whole machine.')
+  expect(((await $.command.run(typedAll(''))) as { text: string }).text).toBe(text)
+})
+
+test("a build whose model requests skip the hook drops the account at the turn's end, and says so", async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.auth('gt')
+  await s.stop()
+  expect(m.statusLine).toBe(undefined)
+  expect(m.store).toEqual({})
+  expect(m.toasts).toEqual([
+    "/auth gt can't work in this build of Claude Code (its model requests don't pass a mod's hooks), so this session stayed on its own login. /auth-all gt switches the whole machine; a newer Claude Code makes /auth work.",
+  ])
+})
+
+test('a turn whose requests passed the hook keeps the account', async () => {
+  const m = jians()
+  const s = sessionOn(m)
+  await s.send()
+  await s.auth('gt')
+  await s.stop()
+  await s.send()
+  await s.stop()
+  expect(auths(m)).toEqual([OWN, 'Bearer gt-1'])
+  expect(m.statusLine).toBe('Account: gt, this session only (/auth off)')
+  expect(m.toasts).toEqual([])
 })

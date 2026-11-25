@@ -1,4 +1,4 @@
-"""token: the token of the login cswap keeps for an account, for /auth-here.
+"""token: the token of the login cswap keeps for an account, for /auth.
 Runs the script against a fake claude_swap package that keeps its state in a
 temporary folder:  python3 tests/token_test.py"""
 import json
