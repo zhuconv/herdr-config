@@ -64,6 +64,7 @@ if [ "${1:-}" = "--remote" ]; then
   (cd agent-plugin/claude/mods && find short-names accounts -type f ! -name .DS_Store ! -name tsconfig.json ! -path '*/.claude-plugin/types/*') | while read -r f; do
     hc file write --on "$m" ".claude/mods/$f" <"agent-plugin/claude/mods/$f" >/dev/null
   done
+  hc exec --on "$m" -- chmod +x .claude/mods/accounts/signin .claude/mods/accounts/token
   hc exec --on "$m" -i -- python3 - <agent-plugin/claude/add-mods.py
   # The accounts mod's table of aliases and emails, readable by its owner only.
   table="$HOME/.config/claude-accounts/accounts.json"
