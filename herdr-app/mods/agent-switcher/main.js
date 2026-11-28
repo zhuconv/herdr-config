@@ -23,7 +23,7 @@ const CARD_W = 280, COLS = 4, GAP = 10, PAD = 12;
 const clean = (s) => (s ?? "").replace(/^[^\p{L}\p{N}]+/u, "").trim();
 // Agent programs that may report no state (a `claude attach` background session), as in
 // my-projects' model.js agentKeys.
-const AGENT_KEYS = new Set(["claude", "codex", "gemini", "opencode", "pi"]);
+const AGENT_KEYS = new Set(["claude", "codex", "antigravity", "gemini", "opencode", "pi"]);
 
 // Every terminal shown in a pane, as its card shows it: the agent's own report, else the
 // pane's, with a background session's state from its labels (projects.js noteStatus) and a

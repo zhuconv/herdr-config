@@ -115,8 +115,8 @@ export default class Tabs extends View {
     // my-tabs: ⌘W parks the focused pane, or the tab with its last pane, so that ⌘⇧W can
     // bring it back (reopen.js). keys.json binds them as my-tabs.close / my-tabs.reopen;
     // "close <tab or pane id>" closes that one instead of the focused one.
-    // my-tabs: a tab a person renames that holds one Claude renames its session (rename.js); the
-    // names reopen gives tabs back aren't such renames.
+    // my-tabs: a tab a person renames that holds one Claude or Antigravity renames its session
+    // (rename.js); the names reopen gives tabs back aren't such renames.
     this.namer = new Namer({ spaces, panes, run, hc, exec, notify });
     const runOwn = (name, args) => {
       if (name === "tab.rename") this.namer.expect(args?.id, args?.name);
@@ -501,8 +501,8 @@ export default class Tabs extends View {
     return true;
   }
 
-  // A tab a person just renamed that holds one Claude: its session takes the name, and the tab
-  // then follows the session (rename.js). The work starts after this render.
+  // A tab a person just renamed that holds one Claude or Antigravity: its session takes the name,
+  // and the tab then follows the session (rename.js). The work starts after this render.
   noteRenames(cx) {
     for (const e of this.namer.see(spaces(), panes())) {
       cx.spawn(async (cx) => {
@@ -1211,8 +1211,8 @@ export default class Tabs extends View {
         cx.stop_propagation(); // a press on a tab doesn't drag the window
         const p = this.pressPane;
         this.pressPane = null;
-        // A double-click renames it (Herdr asks for the name); a tab with one Claude names its
-        // session so (rename.js).
+        // A double-click renames it (Herdr asks for the name); a tab with one Claude or Antigravity
+        // names its session so (rename.js).
         if (e.click_count === 2) { run("tab.rename", { id: tab.id }); return; }
         this.press(p ? { kind: "pane", id: tab.id, ...p } : { kind: "tab", id: tab.id, name: tab.listed[0]?.name, program: tab.listed[0]?.program, count: tab.listed.length }, e);
       })

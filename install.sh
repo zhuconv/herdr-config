@@ -1,16 +1,18 @@
 #!/bin/bash
 # Sets this Mac's Herdr up like the others: keys, the my-main layout, the mods, the theme,
-# the Claude Code (and Codex) hook behind the ⌃Tab cards, the hc-workers and hc-find skills (for
-# Claude Code and Codex), Claude Code's short command names (/ren, /u, /m, /st), and the Raycast
-# ⌘G script.
+# the Claude Code (and Codex, and Antigravity CLI) hook behind the ⌃Tab cards, the Antigravity
+# CLI's title command (its terminals take their conversation's name), the hc-workers and hc-find
+# skills (for Claude Code and Codex), Claude Code's short command names (/ren, /u, /m, /st), and
+# the Raycast ⌘G script.
 # Safe to run again to update. Anything it replaces is copied first to
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
 #
 #   ./install.sh --remote <machine>   (a machine from `hc machine ls`)
-# puts the hook on that machine, so Claude and Codex sessions running there in Herdr terminals
-# fill their ⌃Tab cards too (codex there runs --no-daemon in them, and Codex is asked to trust the
-# hook), the hc-workers and hc-find skills, so an agent there can be a manager and find a
-# session by its name, and the short command names. It needs python3 there.
+# puts the hook on that machine, so Claude, Codex and Antigravity (agy) sessions running there in
+# Herdr terminals fill their ⌃Tab cards too (codex there runs --no-daemon in them, and Codex is
+# asked to trust the hook; agy's terminals take their conversation's name), the hc-workers and
+# hc-find skills, so an agent there can be a manager and find a session by its name, and the short
+# command names. It needs python3 there.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -43,6 +45,7 @@ if [ "${1:-}" = "--remote" ]; then
   hc exec --on "$m" -- chmod +x .local/bin/agent-note
   hc exec --on "$m" -i -- python3 - <agent-plugin/claude/add-agent-note.py
   hc exec --on "$m" -i -- python3 - <agent-plugin/codex/add-agent-note.py
+  hc exec --on "$m" -i -- python3 - <agent-plugin/antigravity/add-agent-note.py
   hc exec --on "$m" -- mkdir -p .local/share/agent-note
   hc file write --on "$m" .local/share/agent-note/codex.sh <agent-plugin/codex/codex.sh >/dev/null
   hc file write --on "$m" .local/bin/codex-hooks-trust <agent-plugin/codex/codex-hooks-trust >/dev/null
@@ -114,8 +117,10 @@ link_skill hc-find
 
 # Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart, PreCompact and
 # PermissionRequest (added once, never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
+# Antigravity CLI: the same hook, and agent-note as its title command (only where agy has run).
 python3 agent-plugin/claude/add-agent-note.py
 python3 agent-plugin/codex/add-agent-note.py
+python3 agent-plugin/antigravity/add-agent-note.py
 # Claude Code's mods (agent-plugin/claude/mods/short-names and accounts, put in ~/.claude/mods by
 # paths.sh): every new session loads them.
 python3 agent-plugin/claude/add-mods.py

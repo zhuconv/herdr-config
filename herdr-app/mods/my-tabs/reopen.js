@@ -13,10 +13,11 @@
 // Parked terminals end after a grace period: 10 min with an agent, 1 min otherwise (so a
 // server's port frees soon). Reopened after that, it gets new terminals in the same
 // folders on the same machine:
-// - An agent whose session was found comes back with `claude --resume <id>` or
-//   `codex resume <id>`, inside the same shell when it ran in one. Claude Code's session id
-//   is in ~/.claude/sessions/<pid>.json while it runs; Codex keeps its rollout-…-<id>.jsonl
-//   open. Both are read on the agent's machine just after ⌘W.
+// - An agent whose session was found comes back with `claude --resume <id>`, `codex resume
+//   <id>` or `agy --conversation <id>`, inside the same shell when it ran in one. Claude Code's
+//   session id is in ~/.claude/sessions/<pid>.json while it runs; Codex keeps its
+//   rollout-…-<id>.jsonl open, agy its conversation's ~/.gemini/antigravity-cli/presence/<id>.lock.
+//   All are read on the agent's machine just after ⌘W.
 // - A shell comes back as a shell.
 // - Anything else (a server, a script, ssh) is not started again: it gets a shell there,
 //   and a toast names the command.
@@ -50,9 +51,9 @@ const ENDED = new Set(["exited", "signaled"]);
 const NO_AGENTS = ["vista", "vista2", "vista3"];
 
 // On the terminal's machine, with its root pid as $1: the root's command line now (after any
-// exec), then each claude / codex process under it: kind, depth (0: the root itself), pid,
-// session file or rollout file ("-": none), command line. Agents behind ssh or tmux aren't
-// under it, so they aren't found.
+// exec), then each claude / codex / agy process under it: kind, depth (0: the root itself), pid,
+// session file, rollout file or the conversations agy holds open ("-": none), command line.
+// Agents behind ssh or tmux aren't under it, so they aren't found.
 export const CAPTURE = String.raw`root=$1
 T=$(printf '\t')
 ps -A -ww -o pid=,ppid=,args= 2>/dev/null | awk -v root="$root" '
@@ -70,6 +71,7 @@ END {
     k = ""
     if (b0 == "claude" || (b0 == "node" && (w[2] ~ /claude-code\// || b1 == "claude"))) k = "CLAUDE"
     else if ((b0 == "codex" || (b0 == "node" && b1 == "codex")) && cmd[p] !~ /app-server/) k = "CODEX"
+    else if (b0 == "agy") k = "AGY"
     if (k != "") print k "\t" d "\t" p "\t" cmd[p]
   }
 }' | while IFS="$T" read -r k d p a; do
@@ -83,6 +85,10 @@ END {
       r=$( { ls -l "/proc/$p/fd" 2>/dev/null; lsof -p "$p" -Fn 2>/dev/null; } | grep -o 'rollout-[^ ]*\.jsonl' | head -n 1)
       [ -n "$r" ] || r=-
       printf 'CODEX\t%s\t%s\t%s\t%s\n' "$d" "$p" "$r" "$a" ;;
+    AGY)
+      c=$( { ls -l "/proc/$p/fd" 2>/dev/null; lsof -p "$p" -Fn 2>/dev/null; } | grep -o 'presence/[0-9a-f-]*\.lock' | sort -u | head -n 5 | tr '\n' ' ')
+      [ -n "$c" ] || c=-
+      printf 'AGY\t%s\t%s\t%s\t%s\n' "$d" "$p" "$c" "$a" ;;
   esac
 done`;
 
@@ -100,20 +106,26 @@ const title = (rec) => (rec.kind !== "pane" && rec.tab.named && rec.tab.name) ||
 
 // CAPTURE's output: { root, agent: { kind, depth, args, session, cwd } | null }. The agent is
 // the shallowest one (a Claude whose tool runs codex is a Claude); Codex's session can come
-// from its native child, which holds the rollout file.
-export function parseCapture(out) {
+// from its native child, which holds the rollout file. agy may hold more than one conversation
+// open: the one its hook named (hint: the terminal's note.session) if it is one of them, else
+// the first; with none open, the one its command line resumed.
+export function parseCapture(out, hint = null) {
   let root = null;
   const found = [];
   for (const line of String(out ?? "").split("\n")) {
     const f = line.split("\t");
     if (f[0] === "ROOT") root = f.slice(1).join(" ").trim() || null;
-    if (f[0] !== "CLAUDE" && f[0] !== "CODEX") continue;
+    if (f[0] !== "CLAUDE" && f[0] !== "CODEX" && f[0] !== "AGY") continue;
     const depth = Number(f[1]), pid = Number(f[2]), detail = f[3] ?? "-", args = f.slice(4).join(" ").trim();
     if (f[0] === "CLAUDE") {
       let s = null;
       try { s = JSON.parse(detail); } catch {}
       const ok = s?.pid === pid && UUID.test(s?.sessionId ?? "");
       found.push({ kind: "claude", depth, args, session: ok ? s.sessionId : null, cwd: ok ? s.cwd ?? null : null });
+    } else if (f[0] === "AGY") {
+      const open = detail.match(new RegExp(UUID.source, "g")) ?? [];
+      const named = args.match(new RegExp(`${RESUMED.agy}(${UUID.source})`))?.[1] ?? null;
+      found.push({ kind: "agy", depth, args, session: (open.includes(hint) ? hint : open[0]) ?? named, cwd: null });
     } else {
       const named = args.match(new RegExp(`\\bresume\\s+(${UUID.source})`));
       found.push({ kind: "codex", depth, args, session: detail.match(UUID)?.[0] ?? named?.[1] ?? null, cwd: null });
@@ -134,23 +146,35 @@ export function shellOf(root) {
 }
 
 // Flags worth keeping when an agent starts again with its session. ps loses quoting, so a
-// value with anything but plain characters is dropped with its flag.
+// value with anything but plain characters is dropped with its flag. agy also takes a model by
+// its name, with spaces ("Gemini 4 Carbon (High)"), which ps runs together: only an id is kept.
+const FLAGS = {
+  claude: { pair: ["--permission-mode", "--model"], single: ["--dangerously-skip-permissions"] },
+  codex: { pair: ["-m", "--model", "-s", "--sandbox", "-a", "--ask-for-approval"], single: ["--no-daemon", "--full-auto", "--dangerously-bypass-approvals-and-sandbox"] },
+  agy: { pair: ["--model", "--mode", "--effort"], single: ["--dangerously-skip-permissions", "--sandbox"], only: { "--model": /^[a-z0-9][a-z0-9.-]*$/ } },
+};
 function keptFlags(kind, args) {
-  const pair = kind === "claude" ? ["--permission-mode", "--model"] : ["-m", "--model", "-s", "--sandbox", "-a", "--ask-for-approval"];
-  const single = kind === "claude" ? ["--dangerously-skip-permissions"] : ["--no-daemon", "--full-auto", "--dangerously-bypass-approvals-and-sandbox"];
+  const { pair, single, only = {} } = FLAGS[kind];
   const plain = (v) => /^[\w@%+=:,./-]+$/.test(v ?? "");
+  const fits = (flag, v) => plain(v) && (!only[flag] || only[flag].test(v));
   const w = words(args), out = [];
   for (let i = 1; i < w.length; i++) {
+    const [flag, v] = w[i].split(/=(.*)/s);
     if (single.includes(w[i])) out.push(w[i]);
-    else if (pair.includes(w[i]) && i + 1 < w.length) { if (plain(w[i + 1])) out.push(w[i], w[i + 1]); i++; }
-    else if (w[i].includes("=") && pair.includes(w[i].split("=")[0]) && plain(w[i])) out.push(w[i]);
+    else if (pair.includes(w[i]) && i + 1 < w.length) { if (fits(w[i], w[i + 1])) out.push(w[i], w[i + 1]); i++; }
+    else if (v !== undefined && pair.includes(flag) && plain(w[i]) && fits(flag, v)) out.push(w[i]);
   }
   return out;
 }
 
+// How each agent's command line names the session it resumes.
+const RESUMED = { claude: "--resume\\s+", codex: "\\bresume\\s+", agy: "(?<!\\S)(?:--conversation|--resume|-r)(?:=|\\s+)" };
+
 export function resumeLine(agent) {
   const flags = keptFlags(agent.kind, agent.args);
-  const argv = agent.kind === "claude" ? ["claude", "--resume", agent.session, ...flags] : ["codex", "resume", ...flags, agent.session];
+  const argv = agent.kind === "claude" ? ["claude", "--resume", agent.session, ...flags]
+    : agent.kind === "agy" ? ["agy", "--conversation", agent.session, ...flags]
+    : ["codex", "resume", ...flags, agent.session];
   return argv.map(q).join(" ");
 }
 
@@ -173,12 +197,12 @@ export function plan(pane, info) {
   return { argv: ["sh", "-c", 'exec "${SHELL:-/bin/sh}" -l'], cwd, note: `Not started again: ${root}` };
 }
 
-/** The agent a terminal ran as its own program ("claude" or "codex"), also through a shell's
- *  command line (`zsh -lic 'claude …'`, this file's `sh -c … 'exec claude …'`); else null: a
- *  shell, ssh, idev, where the agent ran inside something that outlives it, or elsewhere. */
+/** The agent a terminal ran as its own program ("claude", "codex" or "agy"), also through a
+ *  shell's command line (`zsh -lic 'claude …'`, this file's `sh -c … 'exec claude …'`); else
+ *  null: a shell, ssh, idev, where the agent ran inside something that outlives it, or elsewhere. */
 export function ownAgent(argv) {
   if (!Array.isArray(argv) || !argv.length) return null;
-  const agent = (w) => (w === "claude" || w === "codex" ? w : null);
+  const agent = (w) => (w === "claude" || w === "codex" || w === "agy" ? w : null);
   const first = base(argv[0]);
   if (agent(first)) return first;
   if (!SHELLS.has(first)) return null;
@@ -227,8 +251,7 @@ export function exitRecord(snap, d, now = Date.now(), gone = false) {
   if (labels["note.host"]) return null;
   // Without the hook's label, the session it was started to resume (not a fork: that is a new one).
   const line = argv.join(" ");
-  const resumed = /--fork-session\b/.test(line) ? null
-    : (line.match(new RegExp(`${kind === "claude" ? "--resume" : "\\bresume"}\\s+(${UUID.source})`)) ?? [])[1] ?? null;
+  const resumed = /--fork-session\b/.test(line) ? null : (line.match(new RegExp(`${RESUMED[kind]}(${UUID.source})`)) ?? [])[1] ?? null;
   const session = String(labels["note.session"] ?? "").match(UUID)?.[0] ?? resumed;
   if (!session) return null;
   const cwd = labels["note.cwd"] || d.cwd || snap.cwd || null;
@@ -347,7 +370,7 @@ export class Reopener {
         const info = { argv: d.argv ?? null, name: d.name ?? null, labels: d.labels ?? {}, cwd: d.cwd ?? null, root: null, agent: null };
         if (d.pid) {
           const r = await this.h.exec("sh", ["-c", CAPTURE, "sh", String(d.pid)], { on: rec.machine, timeout: 20000 });
-          Object.assign(info, parseCapture(r.stdout));
+          Object.assign(info, parseCapture(r.stdout, d.labels?.["note.session"] ?? null));
         }
         rec.info[p.terminal] = info;
       } catch (err) {

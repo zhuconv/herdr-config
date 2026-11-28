@@ -268,7 +268,7 @@ export function focusedPill(projects, unsorted, unsortedKey) {
 
 // The agent programs: Herdr's own list (menu: the + menu keeps the last one it got, in shared
 // "new-menu.agents"), and these.
-export const agentKeys = (menu) => new Set(["claude", "codex", "gemini", "opencode", "pi",
+export const agentKeys = (menu) => new Set(["claude", "codex", "antigravity", "gemini", "opencode", "pi",
   ...Object.values(menu ?? {}).flat().filter((p) => p?.agent && p.key).map((p) => p.key)]);
 
 // A pane running an agent, including one that reports no status, such as `claude attach` to a

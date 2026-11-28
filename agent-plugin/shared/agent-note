@@ -60,6 +60,11 @@ through `ssh <login node>`: $HC_VIA, or Slurm's $SLURM_SUBMIT_HOST in an idev se
 
 Codex runs it too, as `agent-note codex` (~/.codex/hooks.json, see codex() below), for the same
 notes plus note.ask, what it waits for your approval on.
+
+The Antigravity CLI (agy) runs it twice over: as `agent-note antigravity`, its hook
+(~/.gemini/config/hooks.json, see antigravity() below), for the same notes; and as `agent-note
+agy-title`, its title command (~/.gemini/antigravity-cli/settings.json "title", see agy_title()),
+which names its terminal after the conversation, as Claude names its own after the session.
 """
 import base64
 import glob
@@ -77,9 +82,16 @@ from datetime import datetime, timezone
 
 
 def main():
+    mode = sys.argv[1:2]
+    if mode == ["antigravity"]:
+        print("{}", flush=True)  # agy reads a JSON object from every hook; this one asks nothing
     event = json.load(sys.stdin)
-    if sys.argv[1:2] == ["codex"]:
+    if mode == ["codex"]:
         return codex(event)
+    if mode == ["antigravity"]:
+        return antigravity(event)
+    if mode == ["agy-title"]:
+        return agy_title(event)
     job, own = os.environ.get("CLAUDE_JOB_DIR"), os.environ.get("HC_TERMINAL_ID")
     name, start = event.get("hook_event_name"), time.time()
     if name == "PreCompact" or (name == "SessionStart" and event.get("source") == "compact"):
@@ -272,6 +284,183 @@ def codex_last(event):
             elif item.get("type") == "UserMessage" and text:
                 return " ".join(text.split())[:160], reply
     return None, None
+
+
+AGY_HOME = os.path.expanduser("~/.gemini/antigravity-cli")  # the Antigravity CLI's records
+
+
+def antigravity(event):
+    """The Antigravity CLI (agy) runs this hook too, from ~/.gemini/config/hooks.json as `agent-note
+    antigravity`, for the same notes on its terminal: note.prompt, note.said, note.state,
+    note.session (the conversation's id), note.cwd and note.host. Its hooks get camelCase input, and
+    agy waits for each one before it goes on, so this makes one hc call at a turn's start and one at
+    its end, none in between. SessionStart comes once per conversation, with its first prompt (a
+    conversation starts only then); PreInvocation before each call to the model, invocationNum 0 for
+    a turn's first; Stop at the turn's end. A resumed conversation gets no hook at all: agy_title()
+    notes it. main() has printed the {} agy wants back."""
+    own, name, cid = os.environ.get("HC_TERMINAL_ID"), event.get("hookEventName"), event.get("conversationId") or ""
+    if not own:
+        return
+    if name == "PreInvocation":
+        if str(event.get("invocationNum") or 0) != "0":
+            return  # the model again, within the turn
+        prompt = " ".join((event.get("lastUserInput") or "").split())[:160]
+        pairs = ("note.state=working", *([f"note.prompt={prompt}"] if prompt else []))
+    elif name == "Stop":
+        reply = gist(agy_last(agy_transcript(cid, event.get("transcriptPath")))[1])
+        pairs = ("note.state=idle", f"note.said={reply}")
+    elif name == "SessionStart":
+        pairs = ("note.said=",)  # a new conversation: the reply shown was another's
+    else:
+        return
+    if not agy_own():
+        return
+    label(own, *pairs, *where({"session_id": cid, "cwd": event.get("cwd")}))
+    if cid:
+        arrived(own, cid)  # where it is is known: the title command needn't say it again
+
+
+def agy_title(state):
+    """agy's title command (~/.gemini/antigravity-cli/settings.json "title"). agy runs it at each
+    change of its state, with the session's state as JSON, and makes what it prints the terminal's
+    title, where Herdr reads every agent's session name (the pane header, the Agents list, the tab
+    bar, ⌃Tab, toasts). It prints the conversation's name: the one /rename gave it, else the title
+    agy made for it itself (its /resume picker shows that; the state leaves it out), else nothing
+    (a new conversation). agy clears the title when it exits.
+    The first time it sees a conversation in its terminal (agy started, resumed, /clear), it also
+    notes that conversation there, in the background: where it is, and while agy is idle, the
+    conversation's last prompt and reply, or none (a resumed conversation gets no hook)."""
+    cid = str(state.get("conversation_id") or "")
+    name = state.get("conversation_title") or (agy_made_title(cid) if cid else "")
+    print(" ".join(str(name or "").split()), flush=True)
+    own = os.environ.get("HC_TERMINAL_ID")
+    if own and cid and arrived(own, cid):
+        up = os.getppid()  # agy, or its sh: the child's parent will be gone
+        background(lambda: agy_arrived(own, cid, state, up))
+
+
+def agy_arrived(own, cid, state, up):
+    """A conversation new to its terminal, from the title command's state (agy_title); up: the
+    process that ran the command."""
+    if not agy_own(up):
+        return
+    pairs = ()
+    if state.get("agent_state") == "idle":  # else a turn runs, and its hooks say it
+        prompt, reply = agy_last(agy_transcript(cid, state.get("transcript_path")))
+        pairs = ("note.state=idle", f"note.prompt={prompt or ''}", f"note.said={gist(reply)}")
+    label(own, *pairs, *where({"session_id": cid, "cwd": state.get("cwd")}))
+
+
+def arrived(term, cid):
+    """Whether conversation cid is new to terminal term, since the last call for it: the title
+    command runs often, and only a new one is noted."""
+    path = os.path.join(tempfile.gettempdir(), f"agent-note-{os.getuid()}", "agy-" + term.replace("/", "_"))
+    try:
+        with open(path) as f:
+            if f.read().strip() == cid:
+                return False
+    except OSError:
+        pass
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(cid)
+    return True
+
+
+def background(work):
+    """Runs work() in a child that nothing waits for (agy waits for its title command, and for the
+    end of its output), so the title shows at once."""
+    sys.stdout.flush()
+    if os.fork():
+        return
+    try:
+        os.setsid()
+        null = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(null, fd)
+        work()
+    except Exception:
+        pass
+    os._exit(0)
+
+
+def agy_own(pid=None):
+    """Whether this agy is its terminal's own interactive agent: not one in print mode (-p, a
+    one-off, such as one a Claude runs through its shell), and none with Claude or Codex above it
+    (their $HC_TERMINAL_ID isn't the agy's terminal). Read up the process tree from pid (default:
+    this process's parent)."""
+    pid, seen = pid or os.getppid(), False
+    for _ in range(12):
+        if pid <= 1:
+            return True
+        out = subprocess.run(["ps", "-o", "ppid=,args=", "-p", str(pid)], capture_output=True, text=True, timeout=3).stdout.strip()
+        ppid, _, args = out.partition(" ")
+        words = args.split()
+        if not words:
+            return True
+        prog = os.path.basename(words[0])
+        if prog == "agy" and not seen:
+            seen = True
+            if any(w in ("-p", "--print", "--prompt") or w.startswith(("--print=", "--prompt=")) for w in words[1:]):
+                return False
+        elif prog in ("claude", "codex") or "@anthropic-ai/claude-code" in args or " app-server" in " " + args:
+            return False
+        try:
+            pid = int(ppid)
+        except ValueError:
+            return True
+    return True
+
+
+def agy_transcript(cid, given=None):
+    """An agy conversation's transcript, the full one when there is one. Hooks give its path. The
+    title command's state names one under ~/.gemini/antigravity (agy 1.5.18; that is the desktop
+    app's folder), where the CLI keeps none, so the CLI's own is looked for by the conversation."""
+    found = []
+    if given:
+        found += [os.path.join(os.path.dirname(given), "transcript_full.jsonl"), given]
+    safe = re.sub(r"[^A-Za-z0-9-]", "", cid or "")
+    if safe:
+        logs = os.path.join(AGY_HOME, "brain", safe, ".system_generated", "logs")
+        found += [os.path.join(logs, "transcript_full.jsonl"), os.path.join(logs, "transcript.jsonl")]
+    return next((p for p in found if os.path.isfile(p)), None)
+
+
+def agy_last(path):
+    """The start of the last prompt in an agy conversation, and the reply that came after it (None
+    while there's none), from its transcript (JSON lines): a USER_INPUT step holds the prompt in
+    <USER_REQUEST>, a PLANNER_RESPONSE step the model's text (or only tool calls)."""
+    reply = None
+    for entry in tail_entries(path):
+        text = entry.get("content") if isinstance(entry.get("content"), str) else ""
+        if entry.get("type") == "PLANNER_RESPONSE" and text.strip() and reply is None:
+            reply = text
+        elif entry.get("type") == "USER_INPUT":
+            asked = re.search(r"<USER_REQUEST>\s*(.*?)\s*</USER_REQUEST>", text, re.S)
+            prompt = " ".join((asked.group(1) if asked else text).split())[:160]
+            if prompt:
+                return prompt, reply
+    return None, None
+
+
+def agy_made_title(cid):
+    """The title agy made for a conversation itself, a few seconds after its first reply, from its
+    conversation_summaries.db (a /rename's name is there too); "" while it has none, or when that
+    can't be read."""
+    import sqlite3
+    from urllib.parse import quote
+    db = os.path.join(AGY_HOME, "conversation_summaries.db")
+    if not os.path.isfile(db):
+        return ""
+    try:
+        con = sqlite3.connect(f"file:{quote(db)}?mode=ro", uri=True, timeout=0.3)
+        try:
+            row = con.execute("SELECT title FROM conversation_summaries WHERE conversation_id = ?", (cid,)).fetchone()
+        finally:
+            con.close()
+    except sqlite3.Error:
+        return ""
+    return str(row[0] or "") if row else ""
 
 
 DORMANT = "send a prompt to start"  # a job that isn't running, in Claude's words

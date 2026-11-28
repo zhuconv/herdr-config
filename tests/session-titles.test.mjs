@@ -23,6 +23,13 @@ for (const file of ['my-projects/model.js', 'my-tabs/projects.js', 'my-agents/pr
     assert.equal(nameOf(agent('✳ parser | renderer', claude), automatic), 'parser | renderer');
     assert.equal(nameOf(agent('Codex'), automatic), 'Codex');
   });
+  test(`${file}: an Antigravity (agy) conversation's name is its title as is`, () => {
+    const agy = { key: 'antigravity', name: 'Antigravity', agent: true };
+    assert.equal(nameOf(agent('planets', agy), automatic), 'planets');
+    assert.equal(nameOf(agent('Largest Planet In Solar System', agy), automatic), 'Largest Planet In Solar System');
+    assert.equal(nameOf(agent('parser | renderer', agy), automatic), 'parser | renderer', 'no Codex suffix to drop');
+    assert.equal(nameOf(agent('', agy), automatic), 'Antigravity', 'no name yet: the program');
+  });
   test(`${file}: tab and project rows use the session name`, () => {
     const spaces = [{ id: 's1', index: 1, machine: null, tabs: [{ ...automatic, id: 'tb1', index: 1 }] }];
     const panes = [{ pane: 'p1', tab: 'tb1', terminal: 't43', title: '⠧ c-logo | web-app', program: codex, cwd: '/work/web-app' }];
