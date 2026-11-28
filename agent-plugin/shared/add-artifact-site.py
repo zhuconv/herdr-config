@@ -157,11 +157,18 @@ def setup_claude(block: str) -> None:
 
 def _update_codex_toml(text: str, cmd: str) -> str:
     section = f'[mcp_servers.artifact-site]\ncommand = {json.dumps(cmd)}\nargs = []\n'
+    if text and not text.endswith("\n"):
+        text += "\n"
+    # This table's lines: its header and the lines under it, up to its last one before the next
+    # table ("[" at a line's start); the blank lines and comments just above that table stay.
+    # Without DOTALL, so ".*" keeps to its line: with it, the match ran to the end of the file and
+    # every table after this one ([features], [tui], [hooks.state.*], …) was dropped.
     pattern = re.compile(
-        r"(?ms)^\[mcp_servers\.(?:\"artifact-site\"|artifact-site)\]\n(?:^(?!\[).*\n?)*"
+        r"(?m)^\[mcp_servers\.(?:\"artifact-site\"|artifact-site)\][ \t]*\n"
+        r"(?:(?![ \t]*\[).*\n)*?(?=(?:[ \t]*(?:#.*)?\n)*(?:[ \t]*\[|\Z))"
     )
     if pattern.search(text):
-        return pattern.sub(section, text, count=1)
+        return pattern.sub(lambda _: section, text, count=1)
     sep = "" if not text or text.endswith("\n") else "\n"
     extra_nl = "\n" if text.strip() else ""
     return text + sep + extra_nl + section

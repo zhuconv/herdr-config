@@ -64,6 +64,38 @@ class ArtifactSiteIntegrationTest(unittest.TestCase):
             self.assertEqual(r2.stdout.strip(), "")
             self.assertEqual(list(home.rglob("*.bak-*")), baks_before)
 
+    def test_codex_tables_after_its_section_stay(self) -> None:
+        # Its [mcp_servers.artifact-site] is rewritten in place: what follows it (other tables, a
+        # comment above one, a sub-table of its own) stays, and a key past a blank line inside it goes.
+        with tempfile.TemporaryDirectory() as tmp:
+            home = pathlib.Path(tmp)
+            (home / ".codex").mkdir()
+            (home / ".config/artifact-site").mkdir(parents=True)
+            (home / ".config/artifact-site/config.json").write_text(
+                json.dumps({"baseUrl": "https://yours.lexmount.com/artifact-site"}), encoding="utf-8"
+            )
+            new = (
+                "[mcp_servers.artifact-site]\ncommand = "
+                + json.dumps(str(home / ".local/bin/artifact-site-mcp"))
+                + "\nargs = []\n"
+            )
+            cases = [
+                ("[tui]\ntheme = \"t\"\n\n# trust\n[hooks.state.\"h:stop:0:0\"]\ntrusted_hash = \"sha256:0\"\n", "\n"),
+                ("[mcp_servers.artifact-site.env]\nK = \"v\"\n", ""),
+            ]
+            env = {**os.environ, "HOME": str(home), "CODEX_HOME": str(home / ".codex")}
+            env.pop("ARTIFACT_SITE_URL", None)
+            env.pop("ARTIFACT_SITE_CONFIG_DIR", None)
+            for rest, gap in cases:
+                (home / ".codex/config.toml").write_text(
+                    'model = "o3"\n\n[mcp_servers.artifact-site]\ncommand = "/old"\n\nargs = ["x"]\n' + gap + rest,
+                    encoding="utf-8",
+                )
+                subprocess.run(["python3", str(ADD_SCRIPT)], env=env, capture_output=True, text=True, check=True)
+                self.assertEqual(
+                    (home / ".codex/config.toml").read_text(encoding="utf-8"), 'model = "o3"\n\n' + new + gap + rest
+                )
+
     def test_artifact_md_render(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             md = pathlib.Path(tmp) / "doc.md"
