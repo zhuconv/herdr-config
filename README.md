@@ -2,135 +2,181 @@
 
 English | [中文](README.zh-CN.md)
 
-**My setup for the [Herdr](https://herdr.dev) desktop app, built for running many Claude Code sessions across several machines.**
+**My [Herdr](https://herdr.dev) desktop workspace for running Claude Code, Codex, and Antigravity (`agy`) side by side across Macs, Linux servers, and Slurm clusters.**
 
-Projects span machines and folders. The tab bar shows one project at a time, grouped by directory, and the keyboard covers the rest. One command installs it on a new Mac; one command saves changes back.
+Projects span machines and directories. The top bar shows one project at a time, grouped by folder, while keyboard shortcuts, cross-agent hooks, and shared skills tie every local and remote session together. One command installs everything on a Mac or remote host; one command saves changes back.
 
 ![Herdr with this setup: the Projects panel on the left, the current project's tabs grouped by directory along the top, the Agents list at the bottom left](docs/herdr-demo.png)
 
-**Try it in your browser:** [zhuconv.github.io/herdr-config](https://zhuconv.github.io/herdr-config/) is a clickable mock of this setup, with sample names. Drag tabs onto each other, click a project's **+**, right-click things; a card in the corner lists what to try.
+> **Try the interactive mock in your browser:** [zhuconv.github.io/herdr-config](https://zhuconv.github.io/herdr-config/) — drag tabs onto each other to split, click a project's **+**, or right-click tabs and panes.
 
-## What it does
+---
 
-- **Projects panel** (top left). A project is a set of *machine · directory* pairs. Each Claude conversation goes to the project that holds its directory (subdirectories follow their parent); the rest wait in Unsorted. Click a project to fold it. Click a directory's pill to list its conversations; the pill you're working in opens by itself. Drag a pill, or right-click it, to move it to another project.
-- **Time per project in ActivityWatch.** Herdr's window title names the conversation you're in and its project, as the Projects panel files it: `Herdr — <project> · <conversation> · <program>`, such as `Herdr — paper · fix-figures · Claude Code`. ActivityWatch's window watcher records the title of the window in front, so one category rule per project (`^Herdr — paper( ·|$)`) counts the time you spend in each, without the time you're away. A shell has no conversation part (`Herdr — paper · zsh`) and goes with its tab's project; a directory in no project is Unsorted, as in the panel (`Herdr — Unsorted · …`). Herdr's own window never shows the title: the Window menu, the Dock menu, Mission Control and screen-share pickers do.
-- **New directory, on any machine.** The **+** on a project's row (or right-click → New directory…) asks for a machine and a path, suggests folders as you type (Tab completes), makes the directory there, adds it to the project and starts Claude in it.
-- **One project's tabs at a time.** The top bar shows the current project's tabs from every space and machine, grouped by directory. A color dot and an underline mark a directory with two or more tabs. Tabs name their agents only and carry the numbers that ⌘1–⌘9 use.
-- **Drag to split.** Drop a tab on another to make a split (hold ⌥ to stack them), or on an edge to reorder. To undo a split, drag a name out of the tab, right-click it, or use the button on the pane's header.
-- **Fork a conversation.** Point at a Claude pane's header and click Fork: a copy of the conversation starts beside it, in the same folder on the same machine, named "<name> (fork)" (Claude Code's own `--resume <id> --fork-session`). Background sessions you `claude attach` to fork too, and the original carries on untouched. On a Slurm cluster, a Claude running on a compute node (reached from the pane through ssh or idev) forks on that node: the new pane runs on the login node and connects over ssh, so Claude never runs on the login node.
-- **Background sessions count.** Sessions you `claude attach` to show up in the panel, the tab bar and the Agents list as agents do: working, needs you, done until you look. When one finishes or needs you, you get Herdr's toast and sound, and ⌘G goes there. Their state comes from Claude Code's own record of each session, on the Mac or on a server (`./install.sh --remote <machine>` puts the hook there).
-- **No alert for a compaction.** Claude reports a compaction between turns as if a turn had finished. That covers its own while idle (a long conversation, about an hour after the last reply, before the prompt cache expires) and `/compact`, so Herdr would alert you as if the session had finished again. The hook clears the pane's status as the compaction starts, and Herdr then takes the end as already seen: no sound, no toast, no done mark. A finish you haven't looked at yet keeps its mark. A compaction while Claude is working anyway (a subagent's, or one while background agents run after the turn) is left alone: Claude reports nothing when it ends, so a cleared status would stay empty, and a Claude running over ssh would drop out of the Agents list and the Projects panel.
-- **Closing a manager asks first.** When the pane, tab or space you close holds a terminal that started others with `hc run` (a manager agent's workers), Herdr asks first and lists them: which keep running but can't report back, and which end with it. Close keeps those workers running; End all ends them with it, their own workers included (a tab's after its grace, so ⌘⇧T still brings everything back). With the pointer on either button, the ones it ends turn red. Click one to peek at it; closing the peek brings the question back.
-- **Workers on other machines.** With the `hc-workers` skill, the agent you talk to (the manager, Claude or Codex) starts Claude or Codex sessions on your machines, settles their prompts, and tells you what they report. They show under it in the Agents list, and you can open any of them and steer it yourself.
-- **Keep a worker as a tab.** Point at a worker's row in the Agents list and click its keep button (or right-click it → Keep as tab, or keep in its peek): it becomes a tab on its own machine, and the view goes there. The tab goes with the agent that started it, whatever folder or machine it runs on: in that agent's project and pill, and in the bar right after its tab. Its row shows its machine, and so do its pane header and its entry in the panel. Send back (in the menus of its tab, its pane and its row) puts it under its starter again, still running. So does closing its tab (⌘W, its ×): that never ends a worker, and ⌘⇧T shows it again.
-- **One name per agent.** A Claude's tab shows its session's name, the one `/rename` sets. Rename the tab (double-click it, or right-click → Rename) and the session takes the name too: the tab bar types `/rename` into the Claude once it is idle with an empty box, then lets the tab follow the session again. A tab with Codex or with several agents keeps a plain tab name.
-- **The Antigravity CLI (agy) too.** agy names its terminal after its conversation (the hook is its title command): the name `/rename` gives it, else the title agy made for it. So the pane's header, the tab, the Agents list, ⌃Tab and the toasts all call an agy by that name, and a `/rename` in it changes them all. Renaming its tab renames the conversation, as for Claude. Its ⌃Tab card shows its last prompt and reply, and ⌘⇧T brings back an agy you closed or that exited (`agy --conversation <id>`). An agy that was running when you installed this shows its name once it starts again.
-- **Bring back an agent that exited.** When the agent is all its pane runs (a worker, a manager, a fork), ending it (Ctrl+C, `/exit`, a crash) takes the pane away, and the tab with its last pane. ⌘⇧T resumes the session in the same tab and folder (`claude --resume`, `agy --conversation`). If the session already runs again somewhere, that one is shown instead of starting a second copy.
-- **Find a session by name.** With the `hc-find` skill, an agent finds another of your Claude or Codex sessions by the name you call it, on any machine its hc reaches, and reads it: its screen now or its last turns. Ask from a machine that reaches the session's: the Mac reaches them all.
-- **Short names for Claude's commands.** `/ren <name>` is `/rename <name>`, `/u` is `/usage`, `/m` is `/model` and `/st` is `/status`. Type a space after a short name and the box shows the full command, so Enter runs it as if you had typed it out, with whatever follows. Enter right after a short name runs its command too, but while Claude is still answering, it waits for the answer to end. Claude Code has no setting for aliases of its own commands (requests such as [#94614](https://github.com/anthropics/claude-code/issues/94614) were closed), so this is a Claude Code mod that every new session loads. The names are a table at the top of `agent-plugin/claude/mods/short-names/hooks/register.ts`.
-- **A name for every new Claude session.** A new session names itself from its first message, the way a chat app titles a conversation: Haiku sums the work up in two or three words (`oauth-retry`, `csv-export`), never the message's opening words. It is the session's own name, as `/rename` gives it, so the prompt box, the pane's header, the tab, the Agents list, `/resume` and hc all show it. The first prompt waits about a second for it. A name you gave (`/rename`, `claude -n`, a fork's) stays, and so does an older session's: only a new session's first few prompts name it. It's part of the same mod, in `agent-plugin/claude/mods/short-names/hooks/register.ts`.
-- **Switch Claude accounts by name.** `/auth gt` switches the session you type it in to the account you call gt, its subagents included, through cswap (`uv tool install claude-swap`); the machine and its other sessions stay as they are. `/auth off` puts the session back, a resumed session keeps its account, and a line under the prompt shows it. `/auth` alone lists the accounts and which ones are signed in on that machine; one that isn't, or whose login has expired, gets the command that signs it in. To sign a machine in to every account it doesn't have yet, run `~/.claude/mods/accounts/signin` in a terminal there: it signs in to each one after another, saves each new login before the next sign-in, and switches back at the end. Each machine signs in to each account itself: a login copied to another machine stops working once either copy refreshes it. Each artifact link a session publishes also carries the account it was published from (`…#acct=gt`): the Zen mod [Claude Accounts](https://github.com/zhuconv/zen-config-monorepo/tree/main/multi-cc-switcher) opens it signed in as that account. Your aliases and emails are in `~/.config/claude-accounts/accounts.json`, outside this repo. It's a Claude Code mod as well, in `agent-plugin/claude/mods/accounts/hooks/register.ts`.
-- **One shared Artifact workspace across Claude, Codex and Antigravity (`agy`).** Every agent (and every Claude `/auth` account) publishes and updates pages in the same [Yours (`artifact-site`)](https://github.com/lexmount/artifact-site) library via `~/.config/artifact-site` (outside this repo; `./install.sh --remote <machine>` copies it to a server with `0600` permissions), with Claude Code's built-in `claude.ai` `Artifact` tool denied so `/auth` switches never break page ownership. `artifact-md` renders Markdown (GFM tables, callouts, code highlighting, Mermaid and KaTeX) into standalone single-page HTML and publishes or updates `/s/<slug>` links in place.
+## Agent Support at a Glance
 
-### Keys
+| Capability | Claude Code (`cc`) | Codex | Antigravity (`agy`) |
+|---|:---:|:---:|:---:|
+| Live session title in tabs, pane headers & Agents list | ✅ (auto-named via Haiku) | ✅ (workspace suffix stripped) | ✅ (via `agy-title` hook) |
+| Rename tab → renames the underlying conversation | ✅ | Tab label | ✅ |
+| `⌃Tab` switcher cards with last prompt & reply | ✅ | ✅ (+ pending approval ask) | ✅ |
+| Ring / toast on finish or input needed + `⌘G` jump | ✅ (incl. `claude attach`) | ✅ | ✅ |
+| `⌘⇧T` reopens closed tabs & resumes exited sessions | ✅ (`--resume`) | Tab reopen | ✅ (`--conversation`) |
+| Remote fleet hooks via `./install.sh --remote` | ✅ | ✅ (`--no-daemon` + auto-trust) | ✅ |
+| Unified Artifact workspace ([Yours / `artifact-site`](https://github.com/lexmount/artifact-site)) | ✅ (all `/auth` accounts) | ✅ | ✅ |
 
-| Keys | What they do |
+---
+
+## What It Does
+
+### 1. Projects, Tabs & Window Layout
+
+| Feature | What it gives you |
 |---|---|
-| ⌥1–⌥9 | Show the Nth project's tabs. Hold ⌥ to see the numbers |
-| ⌘1–⌘8, ⌘9 | The Nth tab in the bar; the last tab |
-| ⌃Tab, ⌃⇧Tab | Back to the pane you were in before: agents, background sessions, shells, even the other half of a split. Each card shows the last prompt and reply |
-| ⌘G | Jump to the agent that last rang (needs you, or finished). A glow in the border's own color shows around the outside of its pane and fades, so you can tell which pane of the tab it is. Works from any app with Raycast |
-| ⌘W | Close the pane, then the tab, then the space. ⌘⇧W or ⌘⇧T reopens, and resumes an agent that exited |
-| ⌘T | A new tab in this space |
-| ⌘H ⌘J ⌘K ⌘L | Move between panes |
+| **Cross-machine Projects panel** | Group *machine · directory* pairs into projects (subdirectories inherit their parent; unfiled paths go to *Unsorted*). Click a project to fold it, click a folder pill to list conversations, or drag pills between projects. |
+| **Focused project tab bar** | Shows only the active project's tabs across every space and machine, grouped by directory (marked with a color dot and underline when a folder has 2+ tabs) and numbered for `⌘1–⌘9`. |
+| **Drag-to-split panes** | Drop one tab onto another for a side-by-side split (hold `⌥` to stack vertically), or onto an edge to reorder. Drag a name out, right-click, or use the pane header button to unsplit. |
+| **New directory on any machine** | Click **+** on a project row (or right-click → *New directory…*) to pick a machine and path with live remote Tab-completion, create the folder, register it, and start an agent there. |
+| **ActivityWatch time tracking** | Sets Herdr's OS window title to `Herdr — <project> · <conversation> · <program>` so a single regex rule per project (`^Herdr — paper( ·\|$)` ) tracks active time accurately. |
 
-On a machine that can't be reached (say, waiting for its login), ⌘T and ⌘W can't do anything there. Instead they open a local terminal and show the login command in a toast.
+### 2. Multi-Agent Session UX (`cc` · `Codex` · `agy`)
 
-## Requirements
+| Feature | What it gives you |
+|---|---|
+| **One name per agent** | Pane headers, tabs, Agents list, `⌃Tab`, and notifications all use the session's real name. Double-click a single-agent Claude or `agy` tab to rename the session itself; new Claude sessions auto-summarize their first prompt in 2–3 words via Haiku. |
+| **`⌃Tab` context cards** | Switches across panes in MRU order—including background sessions, shells, and the other half of a split—showing each agent's latest prompt and reply (plus what an awaiting Codex wants to run). |
+| **`⌘G` jump with border halo** | Jumps from any macOS app (via Raycast) to the agent that most recently rang. A color-matched glow spreads around the target pane's outer border and fades so you spot it immediately inside a split tab. |
+| **Resume exited agents (`⌘⇧T`)** | Exiting a standalone agent (`Ctrl+C`, `/exit`, crash) closes its pane cleanly; `⌘⇧T` resumes the conversation in place (`claude --resume`, `agy --conversation`) or jumps to it if already running elsewhere. |
+| **One-click Fork (local & Slurm)** | Hover a Claude pane header and click **Fork** (`--resume <id> --fork-session`) to branch `<name> (fork)` beside it—including `claude attach` sessions and sessions running on Slurm compute nodes over `ssh`/`idev`. |
+| **Background jobs & silent compactions** | `claude attach` sessions report live *working / needs you / done* states on Mac and remote servers. Idle and `/compact` compactions clear transient status so Herdr never fires false "done" alerts. |
 
-- macOS with the [Herdr](https://herdr.dev) app, opened once
-- [GitHub CLI](https://cli.github.com) (`gh`), signed in, to clone this private repo
-- Xcode Command Line Tools (`clang`), for two small helpers
-- Python 3 and [Claude Code](https://claude.com/claude-code), for the hook
-- Optional: [Raycast](https://www.raycast.com), for ⌘G from any app
+### 3. Multi-Machine Workers & Fleet Control (`hc`)
 
-## Install on a new Mac
+| Feature | What it gives you |
+|---|---|
+| **Remote workers (`hc-workers`)** | Any Claude or Codex manager can spawn and steer Claude/Codex workers across your machines via `hc run`, handle prompts, and receive structured reports; workers nest under their manager in the Agents list. |
+| **Keep as tab, Peek & Send back** | Promote any worker from the Agents list (or Peek bar) into a full tab right next to its manager on the worker's own machine. Closing that tab (`⌘W`) or clicking *Send back* parks it under its manager again without stopping it. |
+| **Safe manager close** | Closing a pane, tab, or space whose terminal spawned running `hc` children prompts first—highlighting in red which workers *Close* vs *End all* will terminate (with a grace window so `⌘⇧T` still recovers everything). |
+| **Cross-machine session lookup (`hc-find`)** | Ask an agent to find any Claude or Codex session by tab name, session title, `hc` address, or ID prefix across every reachable machine and read its live screen or recent transcript turns. |
+
+### 4. Accounts, Shared Artifacts & Safety Tooling
+
+| Feature | What it gives you |
+|---|---|
+| **Per-session Claude account rotation** | `/auth <alias>` switches only the current Claude session (and its subagents) via `cswap`; `/auth-all <alias>` switches the whole machine; `~/.claude/mods/accounts/signin` signs in missing/expired slots sequentially. Account aliases live in `~/.config/claude-accounts/accounts.json` (outside git). |
+| **Unified Artifacts (`Yours` / `artifact-site`)** | Claude (across all `/auth` accounts), Codex, and `agy` share one [Yours (`artifact-site`)](https://github.com/lexmount/artifact-site) workspace via `~/.config/artifact-site` (outside git), with Claude's built-in `claude.ai` `Artifact` tool disabled so `/auth` switches never break write access. `artifact-md` renders Markdown (GFM, callouts, Mermaid, KaTeX, code highlight) to standalone HTML and updates `/s/<slug>` links in place. |
+| **Claude command short names** | `/ren` (`/rename`), `/u` (`/usage`), `/m` (`/model`), and `/st` (`/status`) expand inline on Space or execute directly on Enter. |
+| **Pre/post Herdr update check** | Whenever Herdr stages an update, the tab bar runs `herdr-update-check` automatically and posts whether it is safe to restart (checking internal mod APIs, layout schemas, and custom `herdr-core` builds), then verifies every mod loaded after restart. |
+
+---
+
+## Keyboard Shortcuts
+
+| Keys | Action |
+|---|---|
+| `⌥1–⌥9` | Switch to the *N*th project's tabs (hold `⌥` to reveal numbers) |
+| `⌘1–⌘8`, `⌘9` | Jump to the *N*th tab in the bar (`⌘9` = last tab) |
+| `⌃Tab`, `⌃⇧Tab` | Cycle panes in MRU order with prompt/reply preview cards |
+| `⌘G` | Jump to the last agent that rang (works system-wide with Raycast) |
+| `⌘W` / `⌘⇧T` (`⌘⇧W`) | Close pane → tab → space / Reopen closed item & resume exited agent |
+| `⌘T` | New tab in the current space |
+| `⌘H` `⌘J` `⌘K` `⌘L` | Move focus left / down / up / right across split panes |
+
+> If the active machine is unreachable (e.g. awaiting MFA login), `⌘T` and `⌘W` open a local terminal instead and show the machine's login command in a toast.
+
+---
+
+## Quick Start
+
+### Requirements
+
+- **macOS** with [Herdr](https://herdr.dev) installed and opened at least once
+- **Xcode Command Line Tools** (`clang`, for two lightweight macOS input/modifier helpers)
+- **Python 3** + whichever coding agents you use: [Claude Code](https://claude.com/claude-code), [Codex](https://github.com/openai/codex), and/or Antigravity (`agy`)
+- *Optional:* **Node.js 24+** (for local `@artifact-site/cli`; Python fallback works without it), `cswap` (`uv tool install claude-swap`, for `/auth`), and [Raycast](https://www.raycast.com) (for global `⌘G`)
+
+### 1. Install on a Mac
 
 ```sh
-gh repo clone zhuconv/herdr-config ~/herdr-config && ~/herdr-config/install.sh
+git clone https://github.com/zhuconv/herdr-config.git ~/herdr-config
+~/herdr-config/install.sh
 ```
 
-Every file it replaces is backed up to `~/.config/herdr-app.backup-<time>/` first, and it can be run again. At the end it lists two steps to do by hand: record ⌘G for "Go to Waiting Agent" in Raycast, and allow Raycast under Accessibility.
+Existing files are backed up to `~/.config/herdr-app.backup-<timestamp>/` before replacement, and `./install.sh` is idempotent. Finish two one-time macOS steps afterward:
 
-## Remote machines
+1. **Raycast → Settings → Extensions:** press **+ → Add Script Directory** pointing to `~/Documents/Raycast/herdr`, then bind `⌘G` to *Go to Waiting Agent*.
+2. **System Settings → Privacy & Security → Accessibility:** allow **Raycast** (so `⌘G` still forwards *Find Next* inside VS Code).
 
-Claude sessions that run in a remote machine's Herdr terminal can fill the ⌃Tab cards and report working or idle too, once that machine has the hook (it needs `python3` there). The same command puts the `hc-workers` skill there (so an agent on that machine can be a manager), the short names for Claude's commands, and `/auth` with this Mac's account table (`/auth` also needs cswap on that machine):
+### 2. Provision a Remote Machine (`hc`)
+
+Install the cross-agent `agent-note` hooks (`cc`, Codex `--no-daemon` + hook trust, `agy`), shared skills (`hc-workers`, `hc-find`, `artifact-site`), Claude mods (`short-names`, `/auth`), and private `~/.config/claude-accounts` + `~/.config/artifact-site` credentials (`0600`) onto any `hc` host:
 
 ```sh
-./install.sh --remote <machine>      # a name from `hc machine ls`; once per machine
+./install.sh --remote <machine>      # <machine> from `hc machine ls` (requires python3 on remote)
 ```
 
-On a Slurm cluster, where Claude runs on a compute node, the hook passes its labels to the login node over ssh (`$HC_VIA`, or Slurm's `$SLURM_SUBMIT_HOST` in an idev session). The labels include the node the conversation runs on, so Fork starts its copies on that node.
+On Slurm clusters where agents run on compute nodes, the hook forwards pane metadata (`note.session`, `note.cwd`, `note.host`) back to the login node over SSH (`$HC_VIA` or `$SLURM_SUBMIT_HOST`), enabling one-click **Fork** directly onto the right compute node.
 
-## After changing the config
-
-On the Mac where you changed it:
+### 3. Save & Sync Config Edits
 
 ```sh
-./save.sh          # copies the live config into the repo, commits and pushes
-```
+# On the Mac where you modified Herdr mods, layouts, or scripts:
+./save.sh                  # syncs live files into repo, commits, and pushes
 
-On the other Macs:
-
-```sh
+# On your other Macs:
 git pull && ./install.sh
 ```
 
-## When Herdr offers an update
+### 4. Check Herdr Updates Manually
 
-An update never overwrites this config: Herdr rewrites only its own mods and layouts, and moves one that was edited aside first. What it doesn't promise is that these mods keep working, since a few lean on Herdr itself: ⌘G's halo copies its pane layout code, joining tabs rewrites its layout document, and the mods copied from Herdr's don't get its changes. So as soon as Herdr has an update ready, the tab bar (my-tabs, `updatecheck.js`) runs `herdr-update-check` by itself, and a notification beside the update pill says what it found: fine to restart, something to look at first, or don't restart yet. After the restart it runs again and says whether every mod loads. Click a notification for the whole report. By hand:
+`my-tabs` runs this automatically whenever Herdr downloads an update, or run it by hand:
 
 ```sh
-herdr-update-check           # is the waiting update safe for this setup? Says what to look at if not
-herdr-update-check --after   # after Restart: do all the mods load, are the machines fine?
-herdr-update-check --show before   # the last report (or after)
+herdr-update-check                 # check pending Herdr release before Restart
+herdr-update-check --after         # verify mods & remote cores after Restart
+herdr-update-check --show before   # inspect last pre-restart (or `after`) report
+herdr-update-check --from 0.1.16 --to 0.1.17
 ```
 
-It compares Herdr's source at the running and the waiting release where these mods depend on it (the mod API, the commands, labels and names they use, the pane layout code, the layout formats, the mods they copy), and checks herdr-core: a new core generation, and machines whose core carries fixes no release has yet (`FIXES` in `update-check.py`), on which Settings → Machines' Update would put a release without them. `--from 0.1.16 --to 0.1.17` compares any two releases. `install.sh` links it into `~/.local/bin`.
+---
 
-## What's inside
+## Repository Structure (`What's Inside`)
 
-| Path | What it is |
+### Herdr Desktop Mods & Layout (`herdr-app/`)
+
+| Path | Role |
 |---|---|
-| `herdr-app/keys.json` | The keys above |
-| `herdr-app/layouts/my-main.json` | Layout *my-main*: a soft blue-gray focus frame; my-chrome at the top of the sidebar, then my-projects above my-agents; my-pane headers and my-menu right-click menus |
-| `herdr-app/mods/my-projects/` | The Projects panel. `model.js` holds its logic. `optwatch.c` is a small helper, built by `install.sh` to `~/.local/bin/herdr-optwatch`. It tells the panel whether ⌥ is held, and tells the tab bar when a drag you took below the bar ends, since a mod only hears modifier keys while it has the keyboard (a terminal usually does) and the mouse while it's over the mod. It runs only while Herdr is the app in front. `title.js` names Herdr's window after the conversation in focus and its project, for ActivityWatch (see What it does) |
-| `herdr-app/mods/my-tabs/` | The tab bar, with the Overview button, closes you can reopen (`reopen.js`, which also resumes an agent that exited) and that ask first when they would cut off a terminal's running children (`ask.js`; `workers.js` tells a worker, which a close sends back instead of ending, and ends a manager's workers when asked), ⌘G (`waiting.js`; `glow.js` works out where the pane it lands on is, for my-glow's halo: Herdr draws a pane's border inside the pane and doesn't tell mods where panes are, so it lays them out as Herdr does, from the layout and the tab's splits) and the ⌃Tab order (`recent.js`). `rename.js` makes renaming a tab with one Claude or one agy rename its session. `jobs.js` gives background sessions (`claude attach`) their state from Claude Code's records in `~/.claude/jobs`, watched rather than polled: the tab bar writes it on the session's terminal as the label `note.job`, which the other panels read, and rings as Herdr does. A server's sessions come from the label `note.bg` that the hook writes there, read from Herdr's own list of terminals (every 2 s while Herdr isn't in front, since it doesn't redraw then). Workers kept as tabs and sent back go through its `keep`, `sendback` and `peek` commands, for the Agents list, the menus and the peek (`peek.js` opens it). `layoutdoc.js` joins two tabs by rewriting that machine's layout in one write, so the result shows already split; Herdr's commands can only split beside the focused pane, which meant showing the target tab alone first. The layout format isn't a documented interface, so if it ever changes, merging falls back to those commands. `projects.js` is a copy of my-projects' `model.js`, because a mod can't import from another mod's folder. `updatecheck.js` runs `herdr-update-check` when Herdr has an update ready and again after the restart, and posts what it found (see When Herdr offers an update) |
-| `herdr-app/mods/my-glow/` | ⌘G's halo around a pane, in strips laid along its sides (window overlays, which take no keys). Once Herdr's window is in front, the halo comes in over 0.15 s, spreading out from the border, stays 0.3 s and fades over 0.3 s, fast at first; then the strips close themselves |
-| `herdr-app/mods/agent-switcher/` | The ⌃Tab popup: a card per pane, with an agent's last prompt and reply, or a shell's folder |
-| `herdr-app/mods/my-pane/` | Pane headers (a copy of Herdr's own). The split, zoom and close buttons are replaced by two, shown while the pointer is over the header: Fork, on a pane running Claude (fork.js finds its session in Claude Code's own records on that machine; for a Claude on a compute node, the hook's labels say where it runs, and the copy starts there over ssh), and Move to new tab, on a pane in a split. An agent's pane shows its session's name (the title the agent set, as the Agents list shows it), and a terminal on another machine shows that machine before its folder |
-| `herdr-app/mods/my-menu/` | Right-click menus (a copy of Herdr's own). A pane in a split gets Move to new tab; a split tab in the bar gets Move X to new tab for each name. A worker's row in the Agents list gets Keep as tab and Peek, or Go to tab and Send back |
-| `herdr-app/mods/my-peek/` | The bar over a peeked worker (a copy of Herdr's own peek). Its keep is the Agents list's: a tab on the worker's own machine. Herdr's own kept it in the shown space, which fails for another machine's worker |
-| `herdr-app/mods/my-toast/` | Notifications (a copy of Herdr's own). When an agent finishes or needs you, the toast calls it what the Agents list does (a tab you named, else the session's name) instead of "Claude Code". `projects.js` is the same copy of my-projects' `model.js` |
-| `herdr-app/mods/my-chrome/` | The strip at the top of the sidebar (a copy of Herdr's own) without Herdr's logo and name: room for the window buttons, then search and the sidebar toggle |
-| `herdr-app/mods/my-agents/` | The Agents list, as "agent · space", background sessions included. A worker's row shows its machine, and a keep button while you point at it. `projects.js` is the same copy as in my-tabs |
-| `herdr-app/mods/agent-deck-*` | The Overview panel, from [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) |
-| `herdr-app/settings.json`, `themes/warp-dracula.json` | Font, theme, zoom, sounds. `option_as_alt: "on"` makes Option act as Alt with every input source: with a Chinese input method in Chinese mode, Herdr's default sends ⌥1 to the input method, which types it instead of switching projects |
-| `agent-plugin/` | What the agents run, by agent: `shared/` for Claude Code and Codex both (the agent-note hook, the skills), `claude/` (its mods, and the scripts that add the hook and the mods to `~/.claude/settings.json`), `codex/` (the codex function, and the scripts that add the hook and trust it) and `antigravity/` (the script that adds the hook and the title command to the Antigravity CLI). The rows below are its parts |
-| `agent-plugin/shared/agent-note` | The Claude Code hook. It keeps the start of your last prompt and the end of the reply for the ⌃Tab cards, and sets `note.state` (working or idle) for background sessions, which report no state to Herdr, as a fallback for when Herdr isn't watching their records. On a server it also writes `note.bg`: how Claude recorded the turn ended, for the tab bar on the Mac. A resumed conversation's card is filled from its transcript right away. A background session's notes go to every terminal showing it: `claude attach <id>`, or a `claude --resume` window titled with the session's name. (Its `$HC_TERMINAL_ID` is the daemon's, so it's ignored.) For Fork, it also labels each pane with where its conversation is: `note.session`, `note.cwd`, and `note.host` when Claude runs on another host, such as a compute node. It also keeps a compaction between turns quiet (see above): on PreCompact, once Claude reports the compaction as working, it clears the pane's status (OSC 7501 `state=clear`). `install.sh` adds it to `~/.claude/settings.json` (`agent-plugin/claude/add-agent-note.py`). Codex runs it too (`agent-note codex`, added to `~/.codex/hooks.json` and trusted in its `config.toml` by `agent-plugin/codex/add-agent-note.py`): the same notes, plus `note.ask`, what a Codex waiting for your approval wants to do. Only for a Codex that runs its own session (`codex --no-daemon`): Codex's shared background server runs hooks with its own environment, so they're skipped there. In a Herdr terminal, the `codex` command starts it that way (next row). The Antigravity CLI runs it twice over, both added by `agent-plugin/antigravity/add-agent-note.py`: as a hook (`agent-note antigravity`, in `~/.gemini/config/hooks.json`) for the same notes, and as its title command (`agent-note agy-title`, in `~/.gemini/antigravity-cli/settings.json`), which prints the conversation's name for the terminal's title. agy runs no hook when it resumes a conversation, so the title command also notes a conversation it hasn't seen in that terminal before. A title command of your own is kept. |
-| `agent-plugin/shared/artifact-site-mcp`, `agent-plugin/shared/artifact-md`, `agent-plugin/shared/add-artifact-site.py` | Shared [Yours (`artifact-site`)](https://github.com/lexmount/artifact-site) setup for Claude Code, Codex and Antigravity (`agy`). `artifact-site-mcp` runs `@artifact-site/cli mcp` when Node 24+ is installed and otherwise relays stdio JSON-RPC directly to `<baseUrl>/mcp` with Python's standard library, so servers without Node 24 still get every MCP tool. `artifact-md` renders Markdown (GFM, Mermaid, KaTeX, syntax highlighting, table of contents) to standalone HTML and publishes or updates a `/s/<slug>` page in place. `add-artifact-site.py` wires the MCP server and authoring rules into `~/.claude`, `~/.codex` and `~/.gemini`, and denies Claude Code's built-in `Artifact` tool |
-| `agent-plugin/codex/codex.sh`, `agent-plugin/codex/codex-hooks-trust` | Codex's side of the hook. `codex.sh` is a `codex` shell function, loaded from `~/.bashrc` and `~/.zshrc` (`install.sh` adds the line): in a Herdr terminal, a Codex you start runs `--no-daemon` (after `resume` or `fork` for those), so the hook knows its terminal. Other subcommands, and programs that start the codex binary themselves, are left alone. `codex-hooks-trust` asks the installed Codex (`codex app-server`, `hooks/list`) whether it trusts the agent-note hooks, and if not writes Codex's own hashes into `config.toml`, so a Codex that a relay or a manager starts never waits at "Hooks need review". `install.sh` runs it (on Vista, on a compute node of yours), and so does the `codex` function, once after the codex program changes. |
-| `agent-plugin/shared/skills/hc-workers/` | The skill behind workers, for Claude Code and Codex. `SKILL.md` is the manager's part: how to start a worker with `hc run` (labelled with the manager's address, so it can list its workers), what comes back (reports and hc's notes), and how to steer. `worker.md` holds the rules the manager pastes into each worker's task. `vista.md` covers a Slurm cluster, where agents run only on compute nodes and a report goes out through the login node. `install.sh` lays it out as `npx skills` does: the files in `~/.agents/skills/hc-workers/`, where Codex reads skills, and a link to them in `~/.claude/skills/` for Claude Code (`npx skills add` with this repo finds it too) |
-| `agent-plugin/shared/skills/hc-find/` | The skill for finding a session by name, for Claude Code and Codex. `find.py` gets every terminal hc sees in one call, matches the name (a tab someone named, the session's title, an hc name, an address or the start of a session id), then runs itself on the session's machine to find its transcript in Claude Code's or Codex's own records. `install.sh` lays it out as it does hc-workers |
-| `agent-plugin/claude/mods/short-names/` | The short names for Claude's commands and new sessions' names, a Claude Code mod. `hooks/register.ts` holds the table of names. It also names a new session: on its first prompts, while it has no name, a `classic.UserPromptSubmit` hook asks Haiku through `$.model.complete` and answers the name as the hook's `sessionTitle`, which Claude Code applies as `/rename` would. It registers each one as a command, which runs the full one through `$.command.run`, and in the prompt box it swaps a short name for the full one once a space follows it. `agent-plugin/claude/add-mods.py` adds the mod's folder to `CLAUDE_CODE_PLUGIN_DIRS` in `~/.claude/settings.json`, which every new session reads. Claude Code marks its mod interface as early access, so an update of Claude Code may need the mod changed |
-| `agent-plugin/claude/mods/accounts/` | `/auth` and the account tags on artifact links, a Claude Code mod. `/auth` puts the chosen account's token on the session's model requests with an `http.fetch` hook. `token` (Python, run in cswap's own Python) reads that token from the login cswap keeps for the account and refreshes it through cswap's gate, so cswap stays that login's one keeper; while the machine itself is on that account, the requests keep their own login. A `tool.call` hook on the Artifact tool reads the session's login from its `.claude.json`, finds its alias in `~/.config/claude-accounts/accounts.json`, and gives the model the link with `#acct=<alias>`, which also shows as a line under the call. `signin` (Python) signs the machine in to each account cswap has no working login for. `tests/` runs them against a made-up machine (`claude plugin test agent-plugin/claude/mods/accounts`, `python3 agent-plugin/claude/mods/accounts/tests/signin_test.py`, `python3 agent-plugin/claude/mods/accounts/tests/token_test.py`) |
-| `raycast/` | The Raycast script for ⌘G in any app. `postkey.c` keeps ⌘G as Find Next in VS Code |
-| `install.sh`, `save.sh`, `paths.sh` | Install, save back, and the list of what's synced |
-| `update-check.py` | `herdr-update-check`, the check before and after a Herdr update (above) |
-| `docs/` | The clickable mock (served by GitHub Pages) and the screenshot. `index.html` is the design canvas's file with sample names; `support.js` plays it with [Preact](https://preactjs.com) |
+| `herdr-app/keys.json`, `settings.json`, `programs.json`, `themes/` | Keybindings, font/zoom/theme (`option_as_alt: "on"` so `⌥1–⌥9` works under CJK IMEs), and custom program icons. |
+| `herdr-app/layouts/my-main.json` | Layout *my-main*: soft blue-gray focus border, compact sidebar (`my-chrome` → `my-projects` → `my-agents`), custom headers, and menus. |
+| `herdr-app/mods/my-projects/` | Cross-machine Projects panel, `optwatch.c` (`⌥` badge helper), and `title.js` (ActivityWatch window titles). |
+| `herdr-app/mods/my-tabs/` | Project-scoped tab bar, drag-to-split (`layoutdoc.js`), tab-to-session rename (`rename.js`), reopen & exited-agent resume (`reopen.js`), safe manager close (`ask.js`, `workers.js`), `⌘G` target layout (`waiting.js`, `glow.js`), background job watcher (`jobs.js`), and automatic update checks (`updatecheck.js`). |
+| `herdr-app/mods/my-agents/`, `my-peek/` | Agents list (`agent · space`, worker nesting, machine badges, inline *Keep as tab*) and remote-aware worker Peek bar. |
+| `herdr-app/mods/my-pane/`, `my-menu/` | Pane headers with hover **Fork** (local & Slurm compute nodes) and **Move to new tab**, plus split/worker context menus. |
+| `herdr-app/mods/my-glow/`, `my-toast/`, `my-chrome/` | Outer-border `⌘G` halo overlays, session-named notifications, and minimal top sidebar strip. |
+| `herdr-app/mods/agent-switcher/` | `⌃Tab` / `⌃⇧Tab` MRU popup with last prompt & reply cards. |
+| `herdr-app/mods/agent-deck-*` | Overview panel from [zztalker/herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck). |
 
-Not synced: the state Herdr writes itself (`shared.json`, `view.json`, `data/`, …) and hc's machines (add them on a new Mac with `hc machine add`).
+### Cross-Agent Hooks, Mods & Skills (`agent-plugin/`)
+
+| Path | Role |
+|---|---|
+| `agent-plugin/shared/agent-note` | Unified hook & title helper across **Claude Code**, **Codex** (`agent-note codex`), and **Antigravity** (`agent-note antigravity` + `agent-note agy-title`): populates `⌃Tab` cards, tracks `claude attach` background states, labels compute-node hosts for Fork, and silences idle compactions. |
+| `agent-plugin/shared/artifact-site-mcp`, `artifact-md`, `add-artifact-site.py` | Shared [Yours (`artifact-site`)](https://github.com/lexmount/artifact-site) integration across Claude, Codex, and `agy`: stdio MCP launcher (native Node 24 CLI with zero-dependency Python 3.9+ HTTP fallback for remote servers), Markdown/Mermaid/KaTeX single-page HTML publisher (`artifact-md`), and idempotent 3-agent config installer. |
+| `agent-plugin/shared/skills/hc-workers/`, `hc-find/` | Multi-machine worker orchestration (`hc-workers`, incl. Slurm `vista.md`) and cross-machine session/transcript search (`hc-find`), installed into `~/.agents/skills/` and linked for Claude Code. |
+| `agent-plugin/claude/` | Claude Code `short-names` mod (slash aliases + Haiku auto-titling), `accounts` mod (`/auth`, `/auth-all`, `signin`, `#acct=` link tags), and `settings.json` installers. |
+| `agent-plugin/codex/` | Shell wrapper (`codex.sh`, runs `--no-daemon` inside Herdr panes), hook installer, and `codex-hooks-trust` auto-truster. |
+| `agent-plugin/antigravity/` | Wires `agent-note` hooks and dynamic conversation terminal titles into `~/.gemini` for `agy`. |
+
+### Install, Sync & Utilities
+
+| Path | Role |
+|---|---|
+| `install.sh`, `save.sh`, `paths.sh` | Idempotent Mac & `--remote <machine>` installer, live-to-repo saver, and synced path manifest. (Runtime Herdr state like `shared.json`, `view.json`, `data/`, and private account/token files stay outside git.) |
+| `update-check.py` | `herdr-update-check` static & runtime compatibility verifier for Herdr upgrades. |
+| `raycast/` | Global `⌘G` Raycast script + `postkey.c` (passes `⌘G` through to VS Code for *Find Next*). |
+| `docs/`, `tests/` | Interactive Preact browser mock ([zhuconv.github.io/herdr-config](https://zhuconv.github.io/herdr-config/)) and automated Node/Python test suites. |
+
+---
 
 ## Credits
 
-Project icons are from [Lucide](https://lucide.dev) (ISC license, see `herdr-app/mods/my-projects/icons/LICENSE-lucide.txt`). The Overview panel is [herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) by zztalker. The mock runs on [Preact](https://preactjs.com) (MIT, see `docs/LICENSE-preact.txt`).
+Project icons from [Lucide](https://lucide.dev) (ISC, `herdr-app/mods/my-projects/icons/LICENSE-lucide.txt`). Overview panel from [herdr-agent-deck](https://github.com/zztalker/herdr-agent-deck) by zztalker. Browser mock powered by [Preact](https://preactjs.com) (MIT, `docs/LICENSE-preact.txt`).
