@@ -23,6 +23,7 @@ Projects span machines and directories. The top bar shows one project at a time,
 | `⌘⇧T` reopens closed tabs & resumes exited sessions | ✅ (`--resume`) | Tab reopen | ✅ (`--conversation`) |
 | Remote fleet hooks via `./install.sh --remote` | ✅ | ✅ (`--no-daemon` + auto-trust) | ✅ |
 | Unified Artifact workspace ([Yours / `artifact-site`](https://github.com/lexmount/artifact-site)) | ✅ (all `/auth` accounts) | ✅ | ✅ |
+| Status line: model · context used · folder & git · effort · plan usage | ✅ (`statusline.sh`, weekly limit) | ✅ (built-in items, Catppuccin Mocha theme) | ✅ (`statusline.sh`, weekly or 5-hour limit) |
 
 ---
 
@@ -48,6 +49,7 @@ Projects span machines and directories. The top bar shows one project at a time,
 | **Resume exited agents (`⌘⇧T`)** | Exiting a standalone agent (`Ctrl+C`, `/exit`, crash) closes its pane cleanly; `⌘⇧T` resumes the conversation in place (`claude --resume`, `agy --conversation`) or jumps to it if already running elsewhere. |
 | **One-click Fork (local & Slurm)** | Hover a Claude pane header and click **Fork** (`--resume <id> --fork-session`) to branch `<name> (fork)` beside it—including `claude attach` sessions and sessions running on Slurm compute nodes over `ssh`/`idev`. |
 | **Background jobs & silent compactions** | `claude attach` sessions report live *working / needs you / done* states on Mac and remote servers. Idle and `/compact` compactions clear transient status so Herdr never fires false "done" alerts. |
+| **Matching status lines** | Claude Code and `agy` show the same line under the prompt: the model (Claude's in its clay orange, `agy`'s in blue), how full the context is, the folder and its git branch (`*` when it has changes), how long the session has run, the effort, and the plan's usage with its reset time (`agy`: whichever of its weekly and 5-hour limits is used more). A ⚡ before the folder means permissions are skipped. Codex shows its own built-in items in the same order, in color, with the Catppuccin Mocha theme. |
 
 ### 3. Multi-Machine Workers & Fleet Control (`hc`)
 
@@ -92,6 +94,7 @@ Projects span machines and directories. The top bar shows one project at a time,
 - **macOS** with [Herdr](https://herdr.dev) installed and opened at least once
 - **Xcode Command Line Tools** (`clang`, for two lightweight macOS input/modifier helpers)
 - **Python 3** + whichever coding agents you use: [Claude Code](https://claude.com/claude-code), [Codex](https://github.com/openai/codex), and/or Antigravity (`agy`)
+- **jq**, for the Claude Code and `agy` status lines (macOS 15 and later include it)
 - *Optional:* **Node.js 24+** (for local `@artifact-site/cli`; Python fallback works without it), `cswap` (`uv tool install claude-swap`, for `/auth`), and [Raycast](https://www.raycast.com) (for global `⌘G`)
 
 ### 1. Install on a Mac
@@ -162,9 +165,9 @@ herdr-update-check --from 0.1.16 --to 0.1.17
 | `agent-plugin/shared/agent-note` | Unified hook & title helper across **Claude Code**, **Codex** (`agent-note codex`), and **Antigravity** (`agent-note antigravity` + `agent-note agy-title`): populates `⌃Tab` cards, tracks `claude attach` background states, labels compute-node hosts for Fork, and silences idle compactions. |
 | `agent-plugin/shared/artifact-site-mcp`, `artifact-md`, `add-artifact-site.py` | Shared [Yours (`artifact-site`)](https://github.com/lexmount/artifact-site) integration across Claude, Codex, and `agy`: stdio MCP launcher (native Node 24 CLI with zero-dependency Python 3.9+ HTTP fallback for remote servers), Markdown/Mermaid/KaTeX single-page HTML publisher (`artifact-md`), and idempotent 3-agent config installer. |
 | `agent-plugin/shared/skills/hc-workers/`, `hc-find/` | Multi-machine worker orchestration (`hc-workers`, incl. Slurm `vista.md`) and cross-machine session/transcript search (`hc-find`), installed into `~/.agents/skills/` and linked for Claude Code. |
-| `agent-plugin/claude/` | Claude Code `short-names` mod (slash aliases + Haiku auto-titling), `accounts` mod (`/auth`, `/auth-all`, `signin`, `#acct=` link tags), and `settings.json` installers. |
-| `agent-plugin/codex/` | Shell wrapper (`codex.sh`, runs `--no-daemon` inside Herdr panes), hook installer, and `codex-hooks-trust` auto-truster. |
-| `agent-plugin/antigravity/` | Wires `agent-note` hooks and dynamic conversation terminal titles into `~/.gemini` for `agy`. |
+| `agent-plugin/claude/` | Claude Code `short-names` mod (slash aliases + Haiku auto-titling), `accounts` mod (`/auth`, `/auth-all`, `signin`, `#acct=` link tags), its status line (`statusline.sh`; when Claude Code passes no usage, it asks Anthropic's usage endpoint at most once a minute), and `settings.json` installers (the status line's keeps one you set yourself). |
+| `agent-plugin/codex/` | Shell wrapper (`codex.sh`, runs `--no-daemon` inside Herdr panes), hook installer, and `codex-hooks-trust` auto-truster. `tui.toml` holds its status line items and theme: `add-statusline.py` writes them into `[tui]` in `~/.codex/config.toml` (`install.sh`) and copies them back (`save.sh`), and the rest of that file stays out of the repo. |
+| `agent-plugin/antigravity/` | Wires `agent-note` hooks, dynamic conversation terminal titles, and its status line (`statusline.sh`, set by `add-statusline.py`) into `~/.gemini` for `agy`. |
 
 ### Install, Sync & Utilities
 

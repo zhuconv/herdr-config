@@ -23,6 +23,7 @@
 | `⌘⇧T` 恢复已关标签页并接回退出的对话 | ✅（`--resume`） | 恢复 Tab | ✅（`--conversation`） |
 | `./install.sh --remote` 远程服务器一键部署 | ✅ | ✅（`--no-daemon` + 自动信任） | ✅ |
 | 统一 Artifact 作品空间（[Yours / `artifact-site`](https://github.com/lexmount/artifact-site)） | ✅（全 `/auth` 轮换号互通） | ✅ | ✅ |
+| 状态栏：模型 · 上下文用量 · 目录与 git · effort · 套餐用量 | ✅（`statusline.sh`，周额度） | ✅（内置项目 + Catppuccin Mocha 主题） | ✅（`statusline.sh`，周额度或 5 小时额度） |
 
 ---
 
@@ -48,6 +49,7 @@
 | **退出后原位接回（`⌘⇧T`）** | 独占窗格的 Agent 退出（`Ctrl+C`、`/exit`、崩溃）时自动收起窗格；按 `⌘⇧T` 直接在原位置接回对话（`claude --resume`、`agy --conversation`），若已在别处运行则直接跳转不重开。 |
 | **一键 Fork（含 Slurm 节点）** | 鼠标悬停 Claude 窗格头点 **Fork**（`--resume <id> --fork-session`）即可在旁侧分出 `<名字> (fork)` 副本——`claude attach` 后台会话及 Slurm 计算节点上的会话同样支持（副本自动开在同一计算节点上）。 |
 | **后台会话感知与静默压缩** | `claude attach` 会话在 Mac 和服务器上均同步显示 *工作中 / 需要你 / 已完成* 并支持 `⌘G`；空闲自动压缩与 `/compact` 自动清掉瞬态标记，绝不误报“已完成”通知。 |
+| **三端一致的状态栏** | Claude Code 和 `agy` 在输入框下显示同一行：模型（Claude 用它的陶土橙，`agy` 用蓝色）、上下文用了多少、目录与 git 分支（有改动时带 `*`）、会话时长、effort，以及套餐用量和重置时间（`agy` 显示周额度和 5 小时额度里用得多的那个）。目录前的 ⚡ 表示跳过了权限确认。Codex 用它自带的状态栏项目，顺序相同，带颜色，主题是 Catppuccin Mocha。 |
 
 ### 3. 多机 Worker 编排与远程集群控制（`hc`）
 
@@ -92,6 +94,7 @@
 - **macOS**，已安装并至少打开过一次 [Herdr](https://herdr.dev)
 - **Xcode Command Line Tools**（`clang`，用于编译两个轻量快捷键/修饰键辅助程序）
 - **Python 3** + 你在用的任意 Agent CLI：[Claude Code](https://claude.com/claude-code)、[Codex](https://github.com/openai/codex)、Antigravity (`agy`)
+- **jq**（Claude Code 和 `agy` 的状态栏要用，macOS 15 起自带）
 - *可选：* **Node.js 24+**（供本机 `@artifact-site/cli` 使用；无 Node 环境下自动走内置 Python HTTP 回退）、`cswap`（`uv tool install claude-swap`，供 `/auth` 切号用）、[Raycast](https://www.raycast.com)（供全局 `⌘G` 用）
 
 ### 1. 在新 Mac 上安装
@@ -162,9 +165,9 @@ herdr-update-check --from 0.1.16 --to 0.1.17
 | `agent-plugin/shared/agent-note` | **Claude Code**、**Codex**（`agent-note codex`）与 **Antigravity**（`agent-note antigravity` + `agent-note agy-title`）共用的核心钩子：维护 `⌃Tab` 卡片、追踪 `claude attach` 后台状态、记录计算节点主机名供 Fork 使用，并屏蔽空闲压缩假提醒。 |
 | `agent-plugin/shared/artifact-site-mcp`、`artifact-md`、`add-artifact-site.py` | 三端共用的 [Yours (`artifact-site`)](https://github.com/lexmount/artifact-site) 接入：本地 stdio MCP 启动器（优先调 Node 24 CLI，无 Node 服务器自动回退纯 Python 3.9+ HTTP 转发）、Markdown/Mermaid/KaTeX 单页渲染发布器（`artifact-md`），以及幂等三端配置与内置 `Artifact` 禁用脚本。 |
 | `agent-plugin/shared/skills/hc-workers/`、`hc-find/` | 跨机器 Worker 调度（含 Slurm 集群指南 `vista.md`）与按名查找会话/读取记录的共享 Skill，统一装入 `~/.agents/skills/` 并软链至 `~/.claude/skills/`。 |
-| `agent-plugin/claude/` | Claude Code `short-names` Mod（短命令别名 + Haiku 自动起名）、`accounts` Mod（`/auth`、`/auth-all`、`signin`、`#acct=` 链接标）及 `settings.json` 安装脚本。 |
-| `agent-plugin/codex/` | Herdr 终端内自动加 `--no-daemon` 的 Shell 包装（`codex.sh`）、钩子注册与 `codex-hooks-trust` 自动信任工具。 |
-| `agent-plugin/antigravity/` | 为 `agy` 自动配置 `~/.gemini` 下的 `agent-note` 钩子与会话名终端标题命令。 |
+| `agent-plugin/claude/` | Claude Code `short-names` Mod（短命令别名 + Haiku 自动起名）、`accounts` Mod（`/auth`、`/auth-all`、`signin`、`#acct=` 链接标）、状态栏脚本 `statusline.sh`（Claude Code 没传用量时，最多一分钟问一次 Anthropic 的用量接口）及 `settings.json` 安装脚本（状态栏那个会保留你自己设的状态栏）。 |
+| `agent-plugin/codex/` | Herdr 终端内自动加 `--no-daemon` 的 Shell 包装（`codex.sh`）、钩子注册与 `codex-hooks-trust` 自动信任工具。`tui.toml` 存它的状态栏项目和主题：`add-statusline.py` 把它们写进 `~/.codex/config.toml` 的 `[tui]`（`install.sh`），也抄回仓库（`save.sh`），这个文件的其余内容不进仓库。 |
+| `agent-plugin/antigravity/` | 为 `agy` 自动配置 `~/.gemini` 下的 `agent-note` 钩子、会话名终端标题命令与状态栏（`statusline.sh`，由 `add-statusline.py` 设置）。 |
 
 ### 安装同步与辅助脚本
 
