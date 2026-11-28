@@ -23,6 +23,8 @@ ITEMS=(
   "herdr-app/mods/agent-deck-overview/|$H/mods/agent-deck-overview/"
   "herdr-app/mods/agent-deck-labels/|$H/mods/agent-deck-labels/"
   "agent-plugin/shared/agent-note|$HOME/.local/bin/agent-note"
+  "agent-plugin/shared/artifact-site-mcp|$HOME/.local/bin/artifact-site-mcp"
+  "agent-plugin/shared/artifact-md|$HOME/.local/bin/artifact-md"
   "agent-plugin/codex/codex.sh|$HOME/.local/share/agent-note/codex.sh"
   "agent-plugin/codex/codex-hooks-trust|$HOME/.local/bin/codex-hooks-trust"
   "agent-plugin/shared/skills/hc-workers/|$HOME/.agents/skills/hc-workers/"

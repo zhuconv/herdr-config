@@ -42,10 +42,13 @@ trust_on() { # machine
 if [ "${1:-}" = "--remote" ]; then
   m=${2:?usage: ./install.sh --remote <machine>}
   hc file write --on "$m" .local/bin/agent-note <agent-plugin/shared/agent-note >/dev/null
-  hc exec --on "$m" -- chmod +x .local/bin/agent-note
+  hc file write --on "$m" .local/bin/artifact-site-mcp <agent-plugin/shared/artifact-site-mcp >/dev/null
+  hc file write --on "$m" .local/bin/artifact-md <agent-plugin/shared/artifact-md >/dev/null
+  hc exec --on "$m" -- chmod +x .local/bin/agent-note .local/bin/artifact-site-mcp .local/bin/artifact-md
   hc exec --on "$m" -i -- python3 - <agent-plugin/claude/add-agent-note.py
   hc exec --on "$m" -i -- python3 - <agent-plugin/codex/add-agent-note.py
   hc exec --on "$m" -i -- python3 - <agent-plugin/antigravity/add-agent-note.py
+  hc exec --on "$m" -i -- python3 - <agent-plugin/shared/add-artifact-site.py
   hc exec --on "$m" -- mkdir -p .local/share/agent-note
   hc file write --on "$m" .local/share/agent-note/codex.sh <agent-plugin/codex/codex.sh >/dev/null
   hc file write --on "$m" .local/bin/codex-hooks-trust <agent-plugin/codex/codex-hooks-trust >/dev/null
@@ -75,7 +78,22 @@ if [ "${1:-}" = "--remote" ]; then
     hc exec --on "$m" -i -- sh -c 'umask 077; d=$HOME/.config/claude-accounts
       mkdir -p "$d" && cat >"$d/accounts.json" && chmod 600 "$d/accounts.json"' <"$table"
   fi
-  echo "$m: agent-note, the codex function, the hc-workers and hc-find skills, the short command names and /auth are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
+  # Yours (artifact-site) skill and personal connection token, readable by its owner only.
+  if [ -d "$HOME/.agents/skills/artifact-site" ]; then
+    tar -C "$HOME/.agents/skills" -cf - artifact-site | hc exec --on "$m" -i -- sh -c '
+      mkdir -p "$HOME/.agents/skills" "$HOME/.claude/skills" &&
+      rm -rf "$HOME/.agents/skills/artifact-site" &&
+      tar -C "$HOME/.agents/skills" -xf - &&
+      ln -sfn "../../.agents/skills/artifact-site" "$HOME/.claude/skills/artifact-site" &&
+      if [ -d "$HOME/.codex" ]; then mkdir -p "$HOME/.codex/skills" && ln -sfn "../../.agents/skills/artifact-site" "$HOME/.codex/skills/artifact-site"; fi'
+  fi
+  if [ -f "$HOME/.config/artifact-site/config.json" ]; then
+    tar -C "$HOME/.config" -cf - artifact-site | hc exec --on "$m" -i -- sh -c '
+      umask 077; mkdir -p "$HOME/.config" && tar -C "$HOME/.config" -xf - &&
+      chmod 700 "$HOME/.config/artifact-site" "$HOME/.config/artifact-site/tokens" 2>/dev/null || true
+      chmod 600 "$HOME/.config/artifact-site/config.json" "$HOME/.config/artifact-site/tokens/"* 2>/dev/null || true'
+  fi
+  echo "$m: agent-note, artifact-site, the codex function, the hc-workers and hc-find skills, the short command names and /auth are in place. Claude sessions there pick up the hook on their next prompt, Codex ones when they start; new shells and sessions see the rest."
   exit 0
 fi
 
@@ -101,7 +119,7 @@ for item in "${ITEMS[@]}"; do
   mkdir -p "$(dirname "${dst%/}")"
   rsync -a --delete "${SKIP[@]}" "$src" "$dst"
 done
-chmod +x "$HOME/.local/bin/agent-note"
+chmod +x "$HOME/.local/bin/agent-note" "$HOME/.local/bin/artifact-site-mcp" "$HOME/.local/bin/artifact-md"
 
 # Skills are laid out as `npx skills` installs them: one copy in ~/.agents/skills (paths.sh puts it
 # there), which Codex reads, and a link to it in ~/.claude/skills for Claude Code.
@@ -115,12 +133,39 @@ link_skill() { # name
 link_skill hc-workers
 link_skill hc-find
 
+# Yours (artifact-site): install @artifact-site/cli and its bundled skill when Node 24+ is here.
+node24=""
+for cand in "$(command -v node 2>/dev/null || true)" /opt/homebrew/opt/node@24/bin/node /opt/homebrew/bin/node /usr/local/opt/node@24/bin/node /usr/local/bin/node; do
+  if [ -n "$cand" ] && [ -x "$cand" ] && [ "$("$cand" -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)" -ge 24 ] 2>/dev/null; then
+    node24=$cand; break
+  fi
+done
+if [ -n "$node24" ]; then
+  node_dir=$(dirname "$node24")
+  if ! PATH="$node_dir:$PATH" command -v artifact-site >/dev/null 2>&1 && [ -x "$node_dir/npm" ]; then
+    PATH="$node_dir:$PATH" "$node_dir/npm" install -g @artifact-site/cli >/dev/null 2>&1 || true
+  fi
+  as_cli=$(PATH="$node_dir:/opt/homebrew/bin:/usr/local/bin:$PATH" command -v artifact-site 2>/dev/null || true)
+  if [ -n "$as_cli" ] && [ ! -f "$HOME/.agents/skills/artifact-site/SKILL.md" ]; then
+    "$node24" "$as_cli" skill install --bundled --dir "$HOME/.agents/skills/artifact-site" >/dev/null 2>&1 || true
+  fi
+fi
+if [ -d "$HOME/.agents/skills/artifact-site" ]; then
+  link_skill artifact-site
+  if [ -d "$HOME/.codex" ]; then
+    mkdir -p "$HOME/.codex/skills"
+    ln -sfn "../../.agents/skills/artifact-site" "$HOME/.codex/skills/artifact-site"
+  fi
+fi
+
 # Claude Code: run agent-note on UserPromptSubmit, Stop, SessionStart, PreCompact and
 # PermissionRequest (added once, never twice). Codex: the same hook, trusted (only where Codex has run, ~/.codex).
 # Antigravity CLI: the same hook, and agent-note as its title command (only where agy has run).
+# All three share one Yours (artifact-site) MCP and rules configuration.
 python3 agent-plugin/claude/add-agent-note.py
 python3 agent-plugin/codex/add-agent-note.py
 python3 agent-plugin/antigravity/add-agent-note.py
+python3 agent-plugin/shared/add-artifact-site.py
 # Claude Code's mods (agent-plugin/claude/mods/short-names and accounts, put in ~/.claude/mods by
 # paths.sh): every new session loads them.
 python3 agent-plugin/claude/add-mods.py

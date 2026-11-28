@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""Local stdio MCP launcher for Yours (artifact-site).
+
+Prefers the local @artifact-site/cli (Node 24+) when installed, searching common
+macOS/Linux locations so GUI apps without shell PATH adjustments still find Node 24.
+When Node 24 or @artifact-site/cli is absent (for example on a remote Linux/HPC
+machine), falls back to a zero-dependency Python 3.9+ Streamable HTTP relay to
+<baseUrl>/mcp using ~/.config/artifact-site credentials.
+"""
+from __future__ import annotations
+
+import glob
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+
+def _env(*names: str) -> str | None:
+    for name in names:
+        val = os.environ.get(name)
+        if val:
+            return val
+    return None
+
+
+def _target(raw: str) -> tuple[str, str]:
+    parsed = urllib.parse.urlsplit(raw.strip().rstrip("/"))
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError(f"Invalid Artifact Site URL: {raw}")
+    host = parsed.hostname.lower()
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    port = parsed.port
+    if port is not None and port != (443 if parsed.scheme == "https" else 80):
+        host = f"{host}:{port}"
+    base = urllib.parse.urlunsplit((parsed.scheme, host, parsed.path.rstrip("/"), "", ""))
+    return base, re.sub(r"[^a-z0-9.\-]", "_", host)
+
+
+def load_connection(explicit_base: str | None = None) -> tuple[str, str | None]:
+    custom = _env("ARTIFACT_SITE_CONFIG_DIR", "ARTIFACT_HUB_CONFIG_DIR")
+    xdg = Path(_env("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    dirs = [Path(custom)] if custom else [xdg / "artifact-site", xdg / "artifact-hub"]
+
+    stored: dict = {}
+    for d in dirs:
+        cfg = d / "config.json"
+        if cfg.is_file():
+            try:
+                data = json.loads(cfg.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    stored = data
+                    break
+            except Exception:
+                pass
+
+    env_base = _env("ARTIFACT_SITE_URL", "ARTIFACT_HUB_URL")
+    raw_base = explicit_base or env_base or stored.get("baseUrl") or "https://yours.lexmount.com/artifact-site"
+    base, host_key = _target(raw_base)
+
+    token = _env("ARTIFACT_SITE_TOKEN", "ARTIFACT_HUB_TOKEN")
+    if token and env_base and _target(env_base)[0] != base:
+        token = None
+    if not token:
+        for d in dirs:
+            tf = d / "tokens" / host_key
+            if tf.is_file():
+                token = tf.read_text(encoding="utf-8").strip() or None
+                if token:
+                    break
+    return base, token
+
+
+def find_node24() -> str | None:
+    candidates: list[str] = []
+    which_node = shutil.which("node")
+    if which_node:
+        candidates.append(which_node)
+    candidates.extend([
+        "/opt/homebrew/opt/node@24/bin/node",
+        "/opt/homebrew/bin/node",
+        "/usr/local/opt/node@24/bin/node",
+        "/usr/local/bin/node",
+    ])
+    candidates.extend(sorted(glob.glob(os.path.expanduser("~/.nvm/versions/node/v2[4-9]*/bin/node")), reverse=True))
+    candidates.extend([
+        os.path.expanduser("~/.volta/bin/node"),
+        os.path.expanduser("~/.local/bin/node"),
+    ])
+    seen: set[str] = set()
+    for cand in candidates:
+        if not cand or cand in seen or not os.path.isfile(cand) or not os.access(cand, os.X_OK):
+            continue
+        seen.add(cand)
+        try:
+            res = subprocess.run([cand, "-p", "process.versions.node.split('.')[0]"], capture_output=True, text=True, timeout=3)
+            if res.returncode == 0 and int(res.stdout.strip()) >= 24:
+                return cand
+        except Exception:
+            continue
+    return None
+
+
+def _is_node_script(path: str) -> bool:
+    if path.endswith((".js", ".mjs", ".cjs")):
+        return True
+    try:
+        with open(path, "rb") as f:
+            first = f.readline(128)
+        return b"node" in first
+    except Exception:
+        return False
+
+
+def find_cli() -> str | None:
+    me = os.path.realpath(__file__)
+    candidates: list[str] = [
+        "/opt/homebrew/lib/node_modules/@artifact-site/cli/bin/artifact-site.js",
+        "/opt/homebrew/bin/artifact-site",
+        "/usr/local/lib/node_modules/@artifact-site/cli/bin/artifact-site.js",
+        "/usr/local/bin/artifact-site",
+        os.path.expanduser("~/.npm-global/bin/artifact-site"),
+    ]
+    for p in os.environ.get("PATH", "").split(os.pathsep):
+        cand = os.path.join(p, "artifact-site")
+        if os.path.isfile(cand) and os.path.realpath(cand) != me:
+            candidates.append(cand)
+    for cand in candidates:
+        if os.path.isfile(cand) and os.path.realpath(cand) != me and _is_node_script(cand):
+            return cand
+    return None
+
+
+def _parse_base_arg(argv: list[str]) -> str | None:
+    for i, a in enumerate(argv):
+        if a == "--base" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--base="):
+            return a.split("=", 1)[1]
+    return None
+
+
+def run_http_mcp_relay(base_url: str, token: str | None) -> int:
+    endpoint = f"{base_url}/mcp"
+    session_id: str | None = None
+
+    for raw_line in sys.stdin:
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        is_notification = isinstance(msg, dict) and "id" not in msg
+
+        headers = {
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "User-Agent": "artifact-site-mcp-py/1.0",
+        }
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        if session_id:
+            headers["Mcp-Session-Id"] = session_id
+
+        req = urllib.request.Request(endpoint, data=line.encode("utf-8"), headers=headers, method="POST")
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                sid = resp.headers.get("Mcp-Session-Id") or resp.headers.get("mcp-session-id")
+                if sid:
+                    session_id = sid
+                ctype = (resp.headers.get("Content-Type") or "").lower()
+                body = resp.read().decode("utf-8", errors="replace")
+                if is_notification or resp.status == 202 or not body.strip():
+                    continue
+                if "text/event-stream" in ctype:
+                    data_lines: list[str] = []
+                    for ev_line in body.splitlines():
+                        if ev_line.startswith("data:"):
+                            data_lines.append(ev_line[5:].lstrip())
+                        elif not ev_line.strip() and data_lines:
+                            sys.stdout.write("\n".join(data_lines) + "\n")
+                            sys.stdout.flush()
+                            data_lines = []
+                    if data_lines:
+                        sys.stdout.write("\n".join(data_lines) + "\n")
+                        sys.stdout.flush()
+                else:
+                    for out_line in body.splitlines():
+                        if out_line.strip():
+                            sys.stdout.write(out_line.strip() + "\n")
+                    sys.stdout.flush()
+        except urllib.error.HTTPError as exc:
+            err_body = exc.read().decode("utf-8", errors="replace")
+            if not is_notification:
+                reply = {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id") if isinstance(msg, dict) else None,
+                    "error": {"code": -32000, "message": f"HTTP {exc.code}: {err_body[:400]}"},
+                }
+                sys.stdout.write(json.dumps(reply) + "\n")
+                sys.stdout.flush()
+        except Exception as exc:
+            if not is_notification:
+                reply = {
+                    "jsonrpc": "2.0",
+                    "id": msg.get("id") if isinstance(msg, dict) else None,
+                    "error": {"code": -32000, "message": str(exc)},
+                }
+                sys.stdout.write(json.dumps(reply) + "\n")
+                sys.stdout.flush()
+    return 0
+
+
+def main() -> None:
+    extra_args = sys.argv[1:]
+    explicit_base = _parse_base_arg(extra_args)
+    base, token = load_connection(explicit_base)
+
+    if os.environ.get("ARTIFACT_SITE_FORCE_PY_MCP") != "1":
+        node = find_node24()
+        cli = find_cli()
+        if node and cli:
+            cmd = [node, cli, "mcp"]
+            if not explicit_base:
+                cmd.extend(["--base", base])
+            cmd.extend(extra_args)
+            os.execv(node, cmd)
+
+    sys.exit(run_http_mcp_relay(base, token))
+
+
+if __name__ == "__main__":
+    main()
