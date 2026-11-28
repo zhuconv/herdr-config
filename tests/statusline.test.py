@@ -175,15 +175,25 @@ class Scripts(Home):
         self.assertTrue(line.startswith("Opus │ ✍️ 25% │ "), line)
         self.assertIn("weekly ●●●●○○○○○○ 42%", line)
 
-    def test_antigravity_shows_the_quota_used_most(self):
-        line = self.show("antigravity/statusline.sh", {
-            "model": {"display_name": "Gemini 4 Carbon (High)"}, "workspace": {"current_dir": self.home},
+    def test_antigravity_shows_the_weekly_limit_of_the_models_group(self):
+        # The quota as agy 1.5.18 passes it: buckets by id, a weekly and a 5-hour one per group.
+        given = {
+            "model": {"id": "Gemini 4 Carbon (High)", "display_name": "Gemini 4 Carbon (High)", "effort": "high"},
+            "workspace": {"current_dir": self.home, "project_dir": self.home},
             "context_window": {"used_percentage": 12},
-            "quota": [{"bucket_id": "gemini-weekly", "remaining_fraction": 0.95, "reset_time": "2026-12-05T06:09:31Z"},
-                      {"bucket_id": "gemini-5h", "remaining_fraction": 0.89, "reset_time": "2026-11-28T20:39:53Z"}]})
+            "quota": {
+                "gemini-5h": {"remaining_fraction": 0.8, "reset_time": "2026-11-28T20:39:53Z", "reset_in_seconds": 14804},
+                "gemini-weekly": {"remaining_fraction": 0.93, "reset_time": "2026-12-05T06:09:31Z", "reset_in_seconds": 567382},
+                "3p-5h": {"remaining_fraction": 1, "reset_time": "1970-01-01T00:00:00Z", "reset_in_seconds": 0},
+                "3p-weekly": {"remaining_fraction": 0.5, "reset_time": "2026-12-04T00:00:00Z", "reset_in_seconds": 480000}}}
+        line = self.show("antigravity/statusline.sh", given)
         self.assertTrue(line.startswith("Gemini 4 Carbon │ ✍️ 12% │ "), line)
         self.assertIn("● high", line)
-        self.assertIn("quota ●○○○○○○○○○ 11%", line)
+        self.assertIn("weekly ○○○○○○○○○○ 7% ⟳ Dec ", line)
+        given["model"]["display_name"] = "Claude Opus 5.5 (High)"
+        self.assertIn("weekly ●●●●●○○○○○ 50%", self.show("antigravity/statusline.sh", given))
+        given["quota"] = None  # a GEMINI_API_KEY session has no plan quota
+        self.assertNotIn("weekly", self.show("antigravity/statusline.sh", given))
 
 
 if __name__ == "__main__":

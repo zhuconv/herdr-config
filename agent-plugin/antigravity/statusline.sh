@@ -110,60 +110,12 @@ iso_to_epoch() {
 
 # ── Extract JSON data in a single jq pass ───────────────
 parsed=$(printf '%s' "$input" | jq -r '
-  def norm_buckets:
-    if (.quota | type) == "object" then
-      if (.quota.remaining_fraction != null or .quota.used_percentage != null) then
-        [ .quota + { _key: (.quota.refresh_window_label // .quota.display_name // "quota") } ]
-      else
-        [ .quota | to_entries[] | select((.value | type) == "object") | (.value + { _key: .key }) ]
-      end
-    elif (.quota | type) == "array" then
-      [ .quota[] | select(type == "object") | (. + { _key: (.bucket_id // .display_name // "quota") }) ]
-    elif (.rate_limits.seven_day != null) then
-      [ {
-          _key: "weekly",
-          used_percentage: .rate_limits.seven_day.used_percentage,
-          resets_at: .rate_limits.seven_day.resets_at
-        } ]
-    else
-      []
-    end
-    | map(
-        select((.disabled // false) | not)
-        | select(.used_percentage != null or .remaining_fraction != null)
-        | . + {
-            _used: (
-              if .used_percentage != null then .used_percentage
-              else ((1 - (.remaining_fraction // 1)) * 100)
-              end
-            )
-          }
-      );
-
   (.model.display_name // .model.id // "Antigravity") as $mname
-  | ($mname | ascii_downcase) as $mlow
-  | (norm_buckets) as $all_b
-  | (
-      ($all_b | map(select(
-        ((._key // "") | ascii_downcase) as $k |
-        ((.display_name // "") | ascii_downcase) as $d |
-        (($k != "" and ($mlow | contains($k))) or ($d != "" and ($mlow | contains($d))))
-      ))) as $matched
-      | (if ($matched | length) > 0 then $matched else $all_b end)
-      | sort_by(-._used)
-      | .[0] // null
-    ) as $b
-  | (
-      if $b == null then ""
-      else
-        (($b.refresh_window_label // $b._key // $b.display_name // "") | ascii_downcase) as $lbl
-        | if ($lbl | contains("week")) then "weekly"
-          elif ($lbl | contains("day")) or ($lbl | contains("daily")) then "daily"
-          elif (($b.reset_in_seconds // 0) > 86400) then "weekly"
-          else "quota"
-          end
-      end
-    ) as $qlabel
+  # agy passes its plan quota as buckets keyed by id: gemini-weekly and gemini-5h for the Gemini
+  # models, 3p-weekly and 3p-5h for the Claude and GPT ones (agy 1.5.18). The line shows the
+  # weekly bucket of the group the running model is in.
+  | (if ($mname | test("^(claude|gpt)"; "i")) then "3p-weekly" else "gemini-weekly" end) as $bucket
+  | (.quota[$bucket]? // null) as $b
   | [
       $mname,
       (.model.effort // .effort // ""),
@@ -181,11 +133,9 @@ parsed=$(printf '%s' "$input" | jq -r '
       (.vcs.branch // ""),
       (if .vcs.dirty == true then "*" elif .vcs.dirty == false then "clean" else "" end),
       (.session.start_time // ""),
-      $qlabel,
-      (if $b != null then ($b._used | round | tostring) else "" end),
-      (if $b != null then ($b.reset_time // "" | tostring) else "" end),
-      (if $b != null then ($b.reset_in_seconds // "" | tostring) else "" end),
-      (if $b != null then ($b.resets_at // "" | tostring) else "" end)
+      (if $b.remaining_fraction != null then ((1 - $b.remaining_fraction) * 100 | round) else "" end),
+      ($b.reset_time // ""),
+      ($b.reset_in_seconds // "")
     ]
   | map(tostring) | join("\u001f")
 ' 2>/dev/null)
@@ -196,7 +146,7 @@ if [ -z "$parsed" ]; then
 fi
 
 IFS=$'\x1f' read -r model_name effort pct_used cwd vcs_branch vcs_dirty session_start \
-    quota_label quota_pct quota_reset_iso quota_reset_in_sec quota_reset_epoch <<< "$parsed"
+    quota_pct quota_reset_iso quota_reset_in_sec <<< "$parsed"
 
 # ── Normalize model name & effort ───────────────────────
 # Strip trailing "(High)" / "(Medium)" / etc. from display_name if present,
@@ -264,11 +214,9 @@ if [[ "$parent_cmd" == *"--dangerously-skip-permissions"* ]]; then
     skip_perms="⚡  "
 fi
 
-# ── Quota / rate limit reset time ───────────────────────
+# ── Weekly limit's reset time ───────────────────────────
 reset_epoch=""
-if [ -n "$quota_reset_epoch" ] && [ "$quota_reset_epoch" != "null" ]; then
-    reset_epoch="${quota_reset_epoch%%.*}"
-elif [ -n "$quota_reset_iso" ] && [ "$quota_reset_iso" != "null" ]; then
+if [ -n "$quota_reset_iso" ] && [ "$quota_reset_iso" != "null" ]; then
     reset_epoch=$(iso_to_epoch "$quota_reset_iso")
 fi
 if [ -z "$reset_epoch" ] && [ -n "$quota_reset_in_sec" ] && [ "$quota_reset_in_sec" != "null" ]; then
@@ -309,7 +257,7 @@ if [ -n "$quota_pct" ]; then
     quota_bar=$(build_bar "$quota_pct" 10)
     quota_pct_color=$(color_for_pct "$quota_pct")
     line1+="${sep}"
-    line1+="${white}${quota_label:-quota}${reset} ${quota_bar} ${quota_pct_color}${quota_pct}%${reset}"
+    line1+="${white}weekly${reset} ${quota_bar} ${quota_pct_color}${quota_pct}%${reset}"
     [ -n "$quota_reset" ] && line1+=" ${dim}⟳${reset} ${white}${quota_reset}${reset}"
 fi
 

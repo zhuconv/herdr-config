@@ -23,7 +23,7 @@
 | `⌘⇧T` 恢复已关标签页并接回退出的对话 | ✅（`--resume`） | 恢复 Tab | ✅（`--conversation`） |
 | `./install.sh --remote` 远程服务器一键部署 | ✅ | ✅（`--no-daemon` + 自动信任） | ✅ |
 | 统一 Artifact 作品空间（[Yours / `artifact-site`](https://github.com/lexmount/artifact-site)） | ✅（全 `/auth` 轮换号互通） | ✅ | ✅ |
-| 状态栏：模型 · 上下文用量 · 目录与 git · effort · 套餐用量 | ✅（`statusline.sh`，周额度） | ✅（内置项目 + Catppuccin Mocha 主题） | ✅（`statusline.sh`，周额度或 5 小时额度） |
+| 状态栏：模型 · 上下文用量 · 目录与 git · effort · 套餐用量 | ✅（`statusline.sh`，周额度） | ✅（内置项目 + Catppuccin Mocha 主题） | ✅（`statusline.sh`，周额度） |
 
 ---
 
@@ -49,7 +49,7 @@
 | **退出后原位接回（`⌘⇧T`）** | 独占窗格的 Agent 退出（`Ctrl+C`、`/exit`、崩溃）时自动收起窗格；按 `⌘⇧T` 直接在原位置接回对话（`claude --resume`、`agy --conversation`），若已在别处运行则直接跳转不重开。 |
 | **一键 Fork（含 Slurm 节点）** | 鼠标悬停 Claude 窗格头点 **Fork**（`--resume <id> --fork-session`）即可在旁侧分出 `<名字> (fork)` 副本——`claude attach` 后台会话及 Slurm 计算节点上的会话同样支持（副本自动开在同一计算节点上）。 |
 | **后台会话感知与静默压缩** | `claude attach` 会话在 Mac 和服务器上均同步显示 *工作中 / 需要你 / 已完成* 并支持 `⌘G`；空闲自动压缩与 `/compact` 自动清掉瞬态标记，绝不误报“已完成”通知。 |
-| **三端一致的状态栏** | Claude Code 和 `agy` 在输入框下显示同一行：模型（Claude 用它的陶土橙，`agy` 用蓝色）、上下文用了多少、目录与 git 分支（有改动时带 `*`）、会话时长、effort，以及套餐用量和重置时间（`agy` 显示周额度和 5 小时额度里用得多的那个）。目录前的 ⚡ 表示跳过了权限确认。Codex 用它自带的状态栏项目，顺序相同，带颜色，主题是 Catppuccin Mocha。 |
+| **三端一致的状态栏** | Claude Code 和 `agy` 在输入框下显示同一行：模型（Claude 用它的陶土橙，`agy` 用蓝色）、上下文用了多少、目录与 git 分支（有改动时带 `*`）、会话时长、effort，以及套餐的周用量和重置时间（`agy` 显示当前模型那一组的：Gemini，或 Claude 和 GPT）。目录前的 ⚡ 表示跳过了权限确认。Codex 用它自带的状态栏项目，顺序相同，带颜色，主题是 Catppuccin Mocha。 |
 
 ### 3. 多机 Worker 编排与远程集群控制（`hc`）
 

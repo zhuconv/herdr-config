@@ -23,7 +23,7 @@ Projects span machines and directories. The top bar shows one project at a time,
 | `⌘⇧T` reopens closed tabs & resumes exited sessions | ✅ (`--resume`) | Tab reopen | ✅ (`--conversation`) |
 | Remote fleet hooks via `./install.sh --remote` | ✅ | ✅ (`--no-daemon` + auto-trust) | ✅ |
 | Unified Artifact workspace ([Yours / `artifact-site`](https://github.com/lexmount/artifact-site)) | ✅ (all `/auth` accounts) | ✅ | ✅ |
-| Status line: model · context used · folder & git · effort · plan usage | ✅ (`statusline.sh`, weekly limit) | ✅ (built-in items, Catppuccin Mocha theme) | ✅ (`statusline.sh`, weekly or 5-hour limit) |
+| Status line: model · context used · folder & git · effort · plan usage | ✅ (`statusline.sh`, weekly limit) | ✅ (built-in items, Catppuccin Mocha theme) | ✅ (`statusline.sh`, weekly limit) |
 
 ---
 
@@ -49,7 +49,7 @@ Projects span machines and directories. The top bar shows one project at a time,
 | **Resume exited agents (`⌘⇧T`)** | Exiting a standalone agent (`Ctrl+C`, `/exit`, crash) closes its pane cleanly; `⌘⇧T` resumes the conversation in place (`claude --resume`, `agy --conversation`) or jumps to it if already running elsewhere. |
 | **One-click Fork (local & Slurm)** | Hover a Claude pane header and click **Fork** (`--resume <id> --fork-session`) to branch `<name> (fork)` beside it—including `claude attach` sessions and sessions running on Slurm compute nodes over `ssh`/`idev`. |
 | **Background jobs & silent compactions** | `claude attach` sessions report live *working / needs you / done* states on Mac and remote servers. Idle and `/compact` compactions clear transient status so Herdr never fires false "done" alerts. |
-| **Matching status lines** | Claude Code and `agy` show the same line under the prompt: the model (Claude's in its clay orange, `agy`'s in blue), how full the context is, the folder and its git branch (`*` when it has changes), how long the session has run, the effort, and the plan's usage with its reset time (`agy`: whichever of its weekly and 5-hour limits is used more). A ⚡ before the folder means permissions are skipped. Codex shows its own built-in items in the same order, in color, with the Catppuccin Mocha theme. |
+| **Matching status lines** | Claude Code and `agy` show the same line under the prompt: the model (Claude's in its clay orange, `agy`'s in blue), how full the context is, the folder and its git branch (`*` when it has changes), how long the session has run, the effort, and the plan's weekly usage with its reset time (for `agy`, that of the running model's group: Gemini, or Claude and GPT). A ⚡ before the folder means permissions are skipped. Codex shows its own built-in items in the same order, in color, with the Catppuccin Mocha theme. |
 
 ### 3. Multi-Machine Workers & Fleet Control (`hc`)
 
