@@ -16,6 +16,8 @@ for item in "${ITEMS[@]}"; do
 done
 rc=$(raycast_script)
 [ -f "$rc" ] && cp "$rc" raycast/herdr-waiting.sh
+# Codex's status line and theme: only those keys of ~/.codex/config.toml (agent-plugin/codex/tui.toml).
+python3 agent-plugin/codex/add-statusline.py --save
 
 # Submodules (mobile/, kept private) commit and push on their own first; this repo then
 # records which commit each one is at.

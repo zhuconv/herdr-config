@@ -2,8 +2,9 @@
 # Sets this Mac's Herdr up like the others: keys, the my-main layout, the mods, the theme,
 # the Claude Code (and Codex, and Antigravity CLI) hook behind the ⌃Tab cards, the Antigravity
 # CLI's title command (its terminals take their conversation's name), the hc-workers and hc-find
-# skills (for Claude Code and Codex), Claude Code's short command names (/ren, /u, /m, /st), and
-# the Raycast ⌘G script.
+# skills (for Claude Code and Codex), Claude Code's short command names (/ren, /u, /m, /st), the
+# status lines of Claude Code, Codex and the Antigravity CLI (and Codex's theme), and the Raycast
+# ⌘G script.
 # Safe to run again to update. Anything it replaces is copied first to
 # ~/.config/herdr-app.backup-<time>/ (paths relative to your home folder).
 #
@@ -169,6 +170,12 @@ python3 agent-plugin/shared/add-artifact-site.py
 # Claude Code's mods (agent-plugin/claude/mods/short-names and accounts, put in ~/.claude/mods by
 # paths.sh): every new session loads them.
 python3 agent-plugin/claude/add-mods.py
+# Status lines: Claude Code's and the Antigravity CLI's run the scripts paths.sh puts in
+# ~/.claude/statusline.sh and ~/.config/antigravity/statusline.sh (a status line of your own stays);
+# Codex's is its own, with its theme, from agent-plugin/codex/tui.toml (only where Codex has run).
+python3 agent-plugin/claude/add-statusline.py
+python3 agent-plugin/antigravity/add-statusline.py
+python3 agent-plugin/codex/add-statusline.py
 # Codex in Herdr's terminals runs --no-daemon (see RC_LINE above), and Codex is asked whether it
 # trusts the hooks, which are then trusted with its own hashes if not.
 sh -c "$ADD_RC" sh "$RC_LINE"

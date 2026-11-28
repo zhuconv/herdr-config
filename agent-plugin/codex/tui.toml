@@ -1,0 +1,6 @@
+# Codex's status line and theme. install.sh writes these keys into [tui] in ~/.codex/config.toml,
+# and save.sh copies them back from there (agent-plugin/codex/add-statusline.py).
+[tui]
+status_line = ["model", "context-used", "project-name", "git-branch", "reasoning", "weekly-limit"]
+status_line_use_colors = true
+theme = "catppuccin-mocha"

@@ -31,6 +31,8 @@ ITEMS=(
   "agent-plugin/shared/skills/hc-find/|$HOME/.agents/skills/hc-find/"
   "agent-plugin/claude/mods/short-names/|$HOME/.claude/mods/short-names/"
   "agent-plugin/claude/mods/accounts/|$HOME/.claude/mods/accounts/"
+  "agent-plugin/claude/statusline.sh|$HOME/.claude/statusline.sh"
+  "agent-plugin/antigravity/statusline.sh|$HOME/.config/antigravity/statusline.sh"
   "raycast/postkey.c|$HOME/.local/share/postkey/postkey.c"
 )
 SKIP=(--exclude gpui-kit.d.ts --exclude jsconfig.json --exclude .DS_Store
